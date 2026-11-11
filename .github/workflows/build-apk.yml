@@ -17,10 +17,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Сборка
+      - name: Сборка APK
         run: gradle --no-daemon assembleDebug
-      - name: APK для скачивания
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: NovaTV-Launcher-debug
+          name: NovaTV-Launcher-v0.2-debug
           path: app/build/outputs/apk/debug/app-debug.apk
