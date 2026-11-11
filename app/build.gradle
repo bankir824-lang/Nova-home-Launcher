@@ -1,0 +1,3 @@
+plugins { id 'com.android.application' }
+android { namespace 'ru.novatv.launcher'; compileSdk 35
+ defaultConfig { applicationId 'ru.novatv.launcher'; minSdk 30; targetSdk 32; versionCode 1; versionName '0.1.0' } }
