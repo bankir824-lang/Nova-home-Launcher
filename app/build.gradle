@@ -7,8 +7,8 @@ android {
         applicationId 'ru.novatv.launcher'
         minSdk 30
         targetSdk 34
-        versionCode 6
-        versionName '0.5.0'
+        versionCode 7
+        versionName '0.6.0'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -16,4 +16,18 @@ android {
     }
 }
 
-dependencies { testImplementation 'junit:junit:4.13.2' }
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+}
+android {
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+            ['https.proxyHost', 'https.proxyPort', 'http.proxyHost', 'http.proxyPort'].each { key ->
+                if (System.getProperty(key) != null) systemProperty key, System.getProperty(key)
+            }
+        }
+    }
+}
