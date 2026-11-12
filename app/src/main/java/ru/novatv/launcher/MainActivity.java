@@ -22,6 +22,10 @@ public class MainActivity extends Activity {
   private TextView weather;
   private final WeatherRequests weatherRequests = new WeatherRequests();
   private boolean showHidden;
+  private String movingRowKey;
+  private String returnFocusTag;
+  private int currentScreen, movingScreen;
+  private final Map<String, List<App>> fullRows = new HashMap<>();
   private final java.util.concurrent.ExecutorService worker =
       java.util.concurrent.Executors.newSingleThreadExecutor();
   private final Runnable ticker =
@@ -234,7 +238,15 @@ public class MainActivity extends Activity {
     if (content != null) {
       refreshApps();
       home();
+      restoreAppFocus();
     }
+  }
+
+  void restoreAppFocus() {
+    if (returnFocusTag == null) return;
+    View card = content.findViewWithTag(returnFocusTag);
+    if (card != null) card.post(() -> card.requestFocus());
+    returnFocusTag = null;
   }
 
   void nav(String s, Runnable r) {
@@ -275,6 +287,7 @@ public class MainActivity extends Activity {
 
   void clear(String title) {
     content.removeAllViews();
+    fullRows.clear();
     TextView t = label(title, 22, WHITE);
     t.setTypeface(null, Typeface.BOLD);
     content.addView(t);
@@ -282,6 +295,7 @@ public class MainActivity extends Activity {
   }
 
   void home() {
+    currentScreen = 0;
     showHidden = false;
     clear(
         movingPackage == null
@@ -295,10 +309,12 @@ public class MainActivity extends Activity {
             label("Удерживайте OK на карточке, чтобы добавить приложение в избранное", 15, MUTED));
       else rowApps(fav, true);
     }
-    gap(content, 18);
-    content.addView(label("Все приложения", 22, WHITE));
-    gap(content, 9);
-    rowApps(installed);
+    if (getPreferences(0).getBoolean("show_all", true)) {
+      gap(content, 18);
+      content.addView(label("Все приложения", 22, WHITE));
+      gap(content, 9);
+      rowApps(installed);
+    }
     for (String category : readIds("categories")) {
       List<App> apps = new ArrayList<>();
       for (App app : installed)
@@ -307,17 +323,19 @@ public class MainActivity extends Activity {
       content.addView(label(category, 22, WHITE));
       if (apps.isEmpty())
         content.addView(label("Удерживайте OK на приложении → Категория", 14, MUTED));
-      else rowApps(apps);
+      else rowApps(apps, false, "category_order_" + category);
     }
     loadWeather();
   }
 
   void allApps() {
+    currentScreen = 1;
     clear("Все приложения");
     rowApps(installed);
   }
 
   void favorites() {
+    currentScreen = 2;
     clear("Избранное");
     List<App> fav = getFavorites();
     if (fav.isEmpty())
@@ -381,6 +399,21 @@ public class MainActivity extends Activity {
   }
 
   void rowApps(List<App> list, boolean favoritesRow) {
+    rowApps(list, favoritesRow, favoritesRow ? "favorite_order" : "app_order");
+  }
+
+  void rowApps(List<App> input, boolean favoritesRow, String rowKey) {
+    fullRows.put(rowKey, new ArrayList<>(input));
+    List<App> list = new ArrayList<>();
+    for (App app : input) if (showHidden || !readIds("hidden").contains(app.pkg)) list.add(app);
+    if (rowKey.startsWith("category_order_")) {
+      List<String> order = readIds(rowKey);
+      list.sort(
+          (a, b) ->
+              Integer.compare(
+                  order.contains(a.pkg) ? order.indexOf(a.pkg) : Integer.MAX_VALUE,
+                  order.contains(b.pkg) ? order.indexOf(b.pkg) : Integer.MAX_VALUE));
+    }
     HorizontalScrollView scroll = new HorizontalScrollView(this);
     scroll.setClipToPadding(false);
     scroll.setHorizontalScrollBarEnabled(false);
@@ -396,6 +429,7 @@ public class MainActivity extends Activity {
       card.setPadding(dp(10), dp(10), dp(10), dp(10));
       card.setBackground(shape(0xcc273b59, 16));
       card.setFocusable(true);
+      card.setTag(rowKey + ":" + a.pkg);
       card.setContentDescription(a.label + ". OK — запуск, удержание OK — меню");
       card.setOnFocusChangeListener(
           (v, f) -> {
@@ -417,11 +451,14 @@ public class MainActivity extends Activity {
       card.setOnClickListener(
           v -> {
             if (movingPackage != null) finishMove();
-            else launch(a);
+            else {
+              returnFocusTag = rowKey + ":" + a.pkg;
+              launch(a);
+            }
           });
       card.setOnLongClickListener(
           v -> {
-            contextMenu(a, favoritesRow);
+            contextMenu(a, favoritesRow, rowKey);
             return true;
           });
       card.setOnKeyListener(
@@ -442,7 +479,8 @@ public class MainActivity extends Activity {
                       || key == KeyEvent.KEYCODE_DPAD_DOWN)) {
                 reorder(
                     a,
-                    favoritesRow,
+                    rowKey,
+                    list,
                     (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_UP)
                         ? -1
                         : 1);
@@ -467,11 +505,11 @@ public class MainActivity extends Activity {
               return true;
             }
           });
-      if (a.pkg.equals(movingPackage) && favoritesRow == movingFavorites) card.requestFocus();
+      if (a.pkg.equals(movingPackage) && rowKey.equals(movingRowKey)) card.requestFocus();
     }
   }
 
-  void contextMenu(App a, boolean fav) {
+  void contextMenu(App a, boolean fav, String rowKey) {
     if (movingPackage != null) return;
     String[] items = {
       favoriteIds().contains(a.pkg) ? "Убрать из избранного" : "Добавить в избранное",
@@ -494,7 +532,9 @@ public class MainActivity extends Activity {
                 case 1:
                   movingPackage = a.pkg;
                   movingFavorites = fav;
-                  movingOrder = android.text.TextUtils.join("|", fav ? favoriteIds() : appIds());
+                  movingRowKey = rowKey;
+                  movingScreen = currentScreen;
+                  movingOrder = getPreferences(0).getString(rowKey, "");
                   Toast.makeText(
                           this,
                           "Стрелки — перемещение, OK — сохранить, Назад — отменить",
@@ -538,34 +578,46 @@ public class MainActivity extends Activity {
     return ids;
   }
 
-  void reorder(App a, boolean fav, int delta) {
-    List<String> ids = fav ? favoriteIds() : appIds();
-    int from = ids.indexOf(a.pkg), to = from + delta;
-    if (from < 0 || to < 0 || to >= ids.size()) return;
-    Collections.swap(ids, from, to);
-    getPreferences(0)
-        .edit()
-        .putString(fav ? "favorite_order" : "app_order", android.text.TextUtils.join("|", ids))
-        .apply();
+  void reorder(App a, String rowKey, List<App> rowApps, int delta) {
+    List<String> visible = new ArrayList<>();
+    for (App app : rowApps) visible.add(app.pkg);
+    List<String> ids = new ArrayList<>();
+    for (App app : fullRows.get(rowKey)) ids.add(app.pkg);
+    List<String> stored = readIds(rowKey);
+    ids.sort(
+        (x, y) ->
+            Integer.compare(
+                stored.contains(x) ? stored.indexOf(x) : Integer.MAX_VALUE,
+                stored.contains(y) ? stored.indexOf(y) : Integer.MAX_VALUE));
+    if (!AppOrder.moveVisible(ids, visible, a.pkg, delta)) return;
+    getPreferences(0).edit().putString(rowKey, android.text.TextUtils.join("|", ids)).apply();
     refreshApps();
-    home();
+    renderMoveScreen();
+  }
+
+  void renderMoveScreen() {
+    if (movingScreen == 1) allApps();
+    else if (movingScreen == 2) favorites();
+    else home();
   }
 
   void finishMove() {
+    returnFocusTag = movingRowKey + ":" + movingPackage;
     movingPackage = null;
+    renderMoveScreen();
+    restoreAppFocus();
     Toast.makeText(this, "Порядок сохранён", Toast.LENGTH_SHORT).show();
   }
 
   @Override
   public void onBackPressed() {
     if (movingPackage != null) {
-      getPreferences(0)
-          .edit()
-          .putString(movingFavorites ? "favorite_order" : "app_order", movingOrder)
-          .apply();
+      getPreferences(0).edit().putString(movingRowKey, movingOrder).apply();
+      returnFocusTag = movingRowKey + ":" + movingPackage;
       movingPackage = null;
       refreshApps();
-      home();
+      renderMoveScreen();
+      restoreAppFocus();
     } else home();
   }
 
@@ -611,12 +663,27 @@ public class MainActivity extends Activity {
   }
 
   void settings() {
+    currentScreen = 3;
     clear("Настройки NovaTV");
     LinearLayout custom = horizontal();
     content.addView(custom);
     action(custom, "Главный экран", this::appearance);
     action(custom, "Категории", this::manageCategories);
     action(custom, "Автозапуск", this::autostartSettings);
+    LinearLayout system = horizontal();
+    content.addView(system);
+    action(
+        system,
+        "Настройки ТВ",
+        () -> safeStart(new Intent(android.provider.Settings.ACTION_SETTINGS)));
+    action(
+        system,
+        "Сеть",
+        () -> safeStart(new Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)));
+    action(
+        system,
+        "Дата и время",
+        () -> safeStart(new Intent(android.provider.Settings.ACTION_DATE_SETTINGS)));
     LinearLayout tools = horizontal();
     content.addView(tools);
     action(
@@ -703,7 +770,7 @@ public class MainActivity extends Activity {
             + (getFilesDir().getUsableSpace() / 1024 / 1024)
             + " МБ\nНайдено приложений: "
             + installed.size()
-            + "\nВерсия NovaTV: 0.4.0";
+            + "\nВерсия NovaTV: 0.4.1";
     new AlertDialog.Builder(this)
         .setTitle("Диагностика TCL")
         .setMessage(s)
@@ -741,10 +808,13 @@ public class MainActivity extends Activity {
   }
 
   void appearance() {
-    String[] names = {"Показывать приветственный баннер", "Показывать избранное"};
+    String[] names = {
+      "Показывать приветственный баннер", "Показывать избранное", "Показывать все приложения"
+    };
     boolean[] values = {
       getPreferences(0).getBoolean("show_banner", false),
-      getPreferences(0).getBoolean("show_favorites", true)
+      getPreferences(0).getBoolean("show_favorites", true),
+      getPreferences(0).getBoolean("show_all", true)
     };
     new AlertDialog.Builder(this)
         .setTitle("Главный экран")
@@ -756,6 +826,7 @@ public class MainActivity extends Activity {
                   .edit()
                   .putBoolean("show_banner", values[0])
                   .putBoolean("show_favorites", values[1])
+                  .putBoolean("show_all", values[2])
                   .apply();
               render();
             })
@@ -787,7 +858,7 @@ public class MainActivity extends Activity {
     List<String> categories = readIds("categories");
     String[] choices = new String[categories.size() + 1];
     choices[0] = "Создать категорию";
-    for (int i = 0; i < categories.size(); i++) choices[i + 1] = "Удалить: " + categories.get(i);
+    for (int i = 0; i < categories.size(); i++) choices[i + 1] = categories.get(i);
     new AlertDialog.Builder(this)
         .setTitle("Категории приложений")
         .setItems(
@@ -814,17 +885,107 @@ public class MainActivity extends Activity {
                     .setNegativeButton("Отмена", null)
                     .show();
               } else {
-                String category = categories.remove(n - 1);
-                android.content.SharedPreferences.Editor edit =
-                    getPreferences(0)
-                        .edit()
-                        .putString("categories", android.text.TextUtils.join("|", categories));
-                for (App app : installed)
-                  if (category.equals(getPreferences(0).getString("category_" + app.pkg, "")))
-                    edit.remove("category_" + app.pkg);
-                edit.apply();
-                home();
+                categoryActions(categories.get(n - 1));
               }
+            })
+        .setNegativeButton("Закрыть", null)
+        .show();
+  }
+
+  void categoryActions(String category) {
+    new AlertDialog.Builder(this)
+        .setTitle(category)
+        .setItems(
+            new String[] {
+              "Переместить выше", "Переместить ниже", "Переименовать", "Удалить категорию"
+            },
+            (d, n) -> {
+              List<String> categories = readIds("categories");
+              int index = categories.indexOf(category);
+              if (index < 0) return;
+              if (n < 2) {
+                int to = index + (n == 0 ? -1 : 1);
+                if (to < 0 || to >= categories.size()) {
+                  Toast.makeText(this, "Категория уже у края списка", Toast.LENGTH_SHORT).show();
+                  return;
+                }
+                Collections.swap(categories, index, to);
+                getPreferences(0)
+                    .edit()
+                    .putString("categories", android.text.TextUtils.join("|", categories))
+                    .apply();
+                home();
+                manageCategories();
+              } else if (n == 2) {
+                EditText input = new EditText(this);
+                input.setSingleLine(true);
+                input.setText(category);
+                AlertDialog dialog =
+                    new AlertDialog.Builder(this)
+                        .setTitle("Новое название категории")
+                        .setView(input)
+                        .setPositiveButton("Сохранить", null)
+                        .setNegativeButton("Отмена", null)
+                        .create();
+                dialog.setOnShowListener(
+                    x ->
+                        dialog
+                            .getButton(AlertDialog.BUTTON_POSITIVE)
+                            .setOnClickListener(
+                                v -> {
+                                  String name = input.getText().toString().trim().replace("|", "");
+                                  if (name.isEmpty()
+                                      || (!name.equals(category) && categories.contains(name))) {
+                                    input.setError("Введите уникальное название");
+                                    return;
+                                  }
+                                  categories.set(index, name);
+                                  android.content.SharedPreferences.Editor edit =
+                                      getPreferences(0)
+                                          .edit()
+                                          .putString(
+                                              "categories",
+                                              android.text.TextUtils.join("|", categories))
+                                          .putString(
+                                              "category_order_" + name,
+                                              getPreferences(0)
+                                                  .getString("category_order_" + category, ""));
+                                  if (!name.equals(category))
+                                    edit.remove("category_order_" + category);
+                                  for (String key : getPreferences(0).getAll().keySet())
+                                    if (key.startsWith("category_")
+                                        && !key.startsWith("category_order_")
+                                        && category.equals(getPreferences(0).getString(key, "")))
+                                      edit.putString(key, name);
+                                  edit.apply();
+                                  dialog.dismiss();
+                                  home();
+                                }));
+                dialog.show();
+              } else
+                new AlertDialog.Builder(this)
+                    .setTitle("Удалить категорию «" + category + "»?")
+                    .setMessage("Приложения останутся установленными.")
+                    .setPositiveButton(
+                        "Удалить",
+                        (x, y) -> {
+                          categories.remove(category);
+                          android.content.SharedPreferences.Editor edit =
+                              getPreferences(0)
+                                  .edit()
+                                  .putString(
+                                      "categories", android.text.TextUtils.join("|", categories))
+                                  .remove("category_order_" + category);
+                          for (String key : getPreferences(0).getAll().keySet())
+                            if (key.startsWith("category_")
+                                && !key.startsWith("category_order_")
+                                && category.equals(getPreferences(0).getString(key, "")))
+                              edit.remove(key);
+                          edit.apply();
+                          home();
+                        })
+                    .setNegativeButton("Отмена", null)
+                    .show();
             })
         .setNegativeButton("Закрыть", null)
         .show();
