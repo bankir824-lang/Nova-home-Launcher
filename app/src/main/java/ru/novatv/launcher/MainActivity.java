@@ -395,39 +395,42 @@ public class MainActivity extends Activity {
     LinearLayout bar = horizontal();
     launcherHeader = bar;
     page.addView(bar, 0, lp(-1, 38));
-    TextView logo = label("✦  NovaTV", 22, WHITE);
+    TextView logo = label("NovaTV", 22, WHITE);
     logo.setTypeface(null, Typeface.BOLD);
     bar.addView(logo, new LinearLayout.LayoutParams(0, -1, 1));
     menu = horizontal();
     bar.addView(menu);
-    nav("Приложения", () -> openLibrary());
-    nav("☰", this::settings);
+    nav("Приложения", R.drawable.nova_apps, this::openLibrary);
+    nav("Меню", R.drawable.nova_menu, this::settings);
     notificationCounter = null;
-    statusBar = horizontal();
-    bar.addView(statusBar);
+    StatusBarView status = new StatusBarView(this);
+    statusBar = status;
+    if (getPreferences(0).getInt("status_alignment", 1) == 0) bar.addView(status, 1, lp(-2, 38));
+    else bar.addView(status, lp(-2, 38));
     if (getPreferences(0).getBoolean("show_network", true)) {
-      TextView network = label(networkStatus(), 13, MUTED);
-      network.setPadding(dp(12), 0, dp(12), 0);
-      statusBar.addView(network);
+      String network = networkStatus();
+      int icon = "Ethernet".equals(network) ? R.drawable.nova_ethernet
+          : "Нет сети".equals(network) ? R.drawable.nova_offline : R.drawable.nova_wifi;
+      status.item(network, network, icon, false);
     }
     if (getPreferences(0).getBoolean("show_notifications", false) && notificationGranted()) {
-      notificationCounter = label("", 15, accent());
-      notificationCounter.setPadding(dp(8), 0, dp(8), 0);
+      notificationCounter = status.item("", "Уведомления", R.drawable.nova_bell, true);
       notificationCounter.setFocusable(true);
       notificationCounter.setOnClickListener(
           v -> {
             openPanelPage(this::notificationSettings);
           });
-      statusBar.addView(notificationCounter);
     }
-    clock =
-        label(
-            "",
-            getPreferences(0).getInt("clock_size", 17),
-            getPreferences(0).getInt("clock_color", WHITE));
-    if (getPreferences(0).getBoolean("clock_shadow", true))
-      clock.setShadowLayer(dp(2), 0, dp(1), Color.BLACK);
-    if (getPreferences(0).getBoolean("show_clock", true)) statusBar.addView(clock);
+    clock = getPreferences(0).getBoolean("show_clock", true)
+        ? status.item("", "Время", R.drawable.nova_clock, true) : null;
+    if (clock != null) {
+      if (getPreferences(0).contains("clock_size"))
+        clock.setTextSize(getPreferences(0).getInt("clock_size", 17));
+      if (getPreferences(0).contains("clock_color"))
+        clock.setTextColor(getPreferences(0).getInt("clock_color", WHITE));
+      if (getPreferences(0).getBoolean("clock_shadow", false))
+        clock.setShadowLayer(dp(2), 0, dp(1), Color.BLACK);
+    }
     statusBar.setVisibility(
         getPreferences(0).getBoolean("show_status", true) ? View.VISIBLE : View.GONE);
     updateClock();
@@ -439,21 +442,23 @@ public class MainActivity extends Activity {
           (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
       android.net.NetworkCapabilities n = cm.getNetworkCapabilities(cm.getActiveNetwork());
       return n == null
-          ? "○ Нет сети"
+          ? "Нет сети"
           : n.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
-              ? "◈ Ethernet"
+              ? "Ethernet"
               : n.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
-                  ? "◉ Wi-Fi"
-                  : "◉ Сеть";
+                  ? "Wi-Fi"
+                  : "Сеть";
     } catch (Exception e) {
-      return "○ Сеть";
+      return "Сеть";
     }
   }
 
   void updateClock() {
     if (notificationCounter != null) {
-      int count = NotificationAccess.snapshot().size();
-      notificationCounter.setText("♧ " + count);
+      int count = visibleNotifications().size();
+      notificationCounter.setText(getPreferences(0).getInt("status_label_mode", 2) == 1
+          ? "Уведомления " + count : String.valueOf(count));
+      notificationCounter.setContentDescription("Уведомления: " + count);
       notificationCounter.setVisibility(
           count == 0 && getPreferences(0).getBoolean("hide_empty_notifications", true)
               ? View.GONE
@@ -537,8 +542,17 @@ public class MainActivity extends Activity {
     returnFocusTag = null;
   }
 
-  void nav(String s, Runnable r) {
-    TextView t = label(s, 14, WHITE);
+  void nav(String s, int icon, Runnable r) {
+    int mode = getPreferences(0).getInt("status_label_mode", 2);
+    TextView t = label(mode == 0 || (mode == 2 && icon == R.drawable.nova_menu) ? "" : s,
+        14, WHITE);
+    t.setContentDescription(s);
+    if (mode != 1) {
+      Drawable image = getDrawable(icon).mutate();
+      image.setBounds(0, 0, dp(18), dp(18));
+      t.setCompoundDrawablesRelative(image, null, null, null);
+      t.setCompoundDrawablePadding(dp(5));
+    }
     t.setGravity(Gravity.CENTER);
     t.setPadding(dp(10), 0, dp(10), 0);
     t.setBackground(shape(0x99172131, 14));
@@ -773,15 +787,21 @@ public class MainActivity extends Activity {
     final int maxRows =
         favoritesRow ? 1 : Appearance.clamp(getPreferences(0).getInt("grid_rows", 3), 1, 3);
     int rows = Math.min(maxRows, Math.max(1, (list.size() + columns - 1) / columns));
-    content.addView(scroll, lp(-1, (height + 12) * rows + 6));
+    int focusSpace = Math.max(6, (int) Math.ceil(Math.max(width, height) * 0.03f) + 2);
+    int rowHeight = height + 2 * focusSpace;
+    content.addView(scroll, lp(-1, rowHeight * rows + 6));
     appRows.add(scroll);
     LinearLayout grid = vertical();
+    grid.setClipChildren(false);
+    grid.setClipToPadding(false);
     scroll.addView(grid);
     List<LinearLayout> gridRows = new ArrayList<>();
     for (int n = 0; n < rows; n++) {
       LinearLayout line = horizontal();
-      line.setPadding(dp(6), dp(6), dp(6), dp(6));
-      grid.addView(line, lp(-2, height + 12));
+      line.setClipChildren(false);
+      line.setClipToPadding(false);
+      line.setPadding(dp(focusSpace), dp(focusSpace), dp(focusSpace), dp(focusSpace));
+      grid.addView(line, lp(-2, rowHeight));
       gridRows.add(line);
     }
     int cardIndex = 0;
@@ -789,20 +809,14 @@ public class MainActivity extends Activity {
       if (!showHidden && readIds("hidden").contains(a.pkg)) continue;
       LinearLayout row = gridRows.get((cardIndex++ / columns) % rows);
       final int cardWidth = width;
-      final int radius = getPreferences(0).getInt("card_radius", 10);
+      final int radius = getPreferences(0).getInt(a.tv ? "card_radius" : "mobile_radius", 10);
       final int cardColor = getPreferences(0).getInt("card_color", 0xdd222c40);
-      LinearLayout card = vertical();
-      card.setGravity(Gravity.CENTER);
-      card.setPadding(dp(4), dp(4), dp(4), dp(4));
-      card.setClipToOutline(true);
-      card.setBackground(shape(cardColor, radius));
-      card.setFocusable(true);
+      AppCardView card = new AppCardView(this, radius, cardColor);
       card.setTag(rowKey + ":" + a.pkg);
       card.setContentDescription(a.label + ". OK — запуск, удержание OK — меню");
       card.setOnFocusChangeListener(
           (v, f) -> {
-            float scale = getPreferences(0).getBoolean("focus_zoom", true) ? 1.06f : 1f;
-            card.animate().scaleX(f ? scale : 1).scaleY(f ? scale : 1).setDuration(150).start();
+            card.showFocus(f, getPreferences(0).getBoolean("focus_zoom", true), accent());
             if (f) {
               if (getPreferences(0).getBoolean("pin_row", false))
                 ((ScrollView) page.getParent())
@@ -819,36 +833,16 @@ public class MainActivity extends Activity {
               if (getPreferences(0).getBoolean("remember_focus", true))
                 getPreferences(0).edit().putString("last_focus", rowKey + ":" + a.pkg).apply();
             }
-            GradientDrawable bg = shape(cardColor, radius);
-            if (f) bg.setStroke(dp(2), accent());
-            card.setBackground(bg);
           });
       marginAdd(row, card, cardWidth, height, getPreferences(0).getInt("card_gap", 10));
-      ImageView icon = new ImageView(this);
-      icon.setImageDrawable(
-          a.banner != null && getPreferences(0).getBoolean("use_banners", true)
-              ? a.banner
-              : a.icon);
-      icon.setScaleType(
-          a.banner != null && getPreferences(0).getBoolean("use_banners", true)
-              ? ImageView.ScaleType.CENTER_CROP
-              : ImageView.ScaleType.FIT_CENTER);
-      int imageHeight = height - (titles ? 24 : 0) - 8;
-      if (a.banner != null && getPreferences(0).getBoolean("use_banners", true))
-        card.addView(icon, lp(-1, imageHeight));
-      else {
-        android.widget.FrameLayout box = new android.widget.FrameLayout(this);
-        card.addView(box, lp(-1, imageHeight));
-        int size = Math.min(imageHeight, getPreferences(0).getInt("icon_size", 44));
-        android.widget.FrameLayout.LayoutParams ip =
-            new android.widget.FrameLayout.LayoutParams(dp(size), dp(size), Gravity.CENTER);
-        box.addView(icon, ip);
-      }
+      boolean useBanner = a.tv && a.banner != null
+          && getPreferences(0).getBoolean("use_banners", true);
+      card.addArtwork(useBanner ? a.banner : a.icon, height - (titles ? 24 : 0), useBanner, !a.tv);
       TextView name = label((favoriteIds().contains(a.pkg) ? "★ " : "") + a.label, 15, WHITE);
       name.setSingleLine(true);
       name.setEllipsize(android.text.TextUtils.TruncateAt.END);
       name.setGravity(Gravity.CENTER);
-      if (titles) card.addView(name, lp(cardWidth - 8, 24));
+      if (titles) card.contents.addView(name, lp(cardWidth - 8, 24));
       card.setOnClickListener(
           v -> {
             if (movingPackage != null) finishMove();
@@ -906,7 +900,7 @@ public class MainActivity extends Activity {
       "Категория",
       readIds("hidden").contains(a.pkg) ? "Показать приложение" : "Скрыть приложение"
     };
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle(a.label)
         .setItems(
             items,
@@ -1044,7 +1038,7 @@ public class MainActivity extends Activity {
   void appInfo(App a) {
     try {
       PackageInfo p = getPackageManager().getPackageInfo(a.pkg, 0);
-      new AlertDialog.Builder(this)
+      new NovaDialog(this)
           .setTitle(a.label)
           .setMessage(
               "Пакет: "
@@ -1191,7 +1185,7 @@ public class MainActivity extends Activity {
         currentWallpaper.setColorFilter((dim * 255 / 100) << 24, PorterDuff.Mode.SRC_ATOP);
     }
     if (changed.removeIf(key -> key.equals("show_status") || key.equals("show_network")
-        || key.equals("show_clock") || key.startsWith("clock_")
+        || key.equals("show_clock") || key.startsWith("clock_") || key.startsWith("status_")
         || key.equals("show_notifications") || key.equals("hide_empty_notifications"))) {
       page.removeView(launcherHeader);
       header();
@@ -1379,7 +1373,7 @@ public class MainActivity extends Activity {
             names[i] = installed.get(i).label;
             checked[i] = locked.contains(installed.get(i).pkg);
           }
-          new AlertDialog.Builder(this)
+          new NovaDialog(this)
               .setTitle("Защищённые приложения")
               .setMultiChoiceItems(names, checked, (d, n, value) -> checked[n] = value)
               .setPositiveButton(
@@ -1431,7 +1425,7 @@ public class MainActivity extends Activity {
     fields.addView(first);
     fields.addView(second);
     AlertDialog dialog =
-        new AlertDialog.Builder(this)
+        new NovaDialog(this)
             .setTitle("Создать PIN NovaTV")
             .setView(fields)
             .setPositiveButton("Сохранить", null)
@@ -1475,7 +1469,7 @@ public class MainActivity extends Activity {
     }
     EditText input = pinInput();
     AlertDialog dialog =
-        new AlertDialog.Builder(this)
+        new NovaDialog(this)
             .setTitle("PIN NovaTV")
             .setView(input)
             .setPositiveButton("Подтвердить", null)
@@ -1567,13 +1561,21 @@ public class MainActivity extends Activity {
     slider(p, "◯", "Радиус скругления", "card_radius", 10, 0, 28, " dp");
     slider(p, "↔", "Расстояние между карточками", "card_gap", 10, 2, 32, " dp");
     slider(p, "▣", "Размер значков без баннера", "icon_size", 44, 24, 80, " dp");
+    p.section("МОБИЛЬНЫЕ КАРТОЧКИ");
+    p.action("▣", "Режим изображения", "", () -> chooseSetting(
+        "mobile_icon_mode", "Режим изображения",
+        new String[] {"Заполнить", "Вписать", "Оригинальный размер"}, 0));
+    slider(p, "▣", "Масштаб значка", "mobile_icon_scale", 100, 60, 140, " %");
+    slider(p, "↔", "Внутренние поля", "mobile_icon_padding", 4, 0, 24, " dp");
+    slider(p, "◯", "Скругление мобильной карточки", "mobile_radius", 10, 0, 28, " dp");
+    p.action("◐", "Фон мобильной карточки", "", () -> chooseColor("mobile_card_color", false));
     toggle(p, "⌖", "Увеличение выбранной карточки", "focus_zoom", true);
     p.action(
         "▭",
         "Соотношение сторон",
         "16:9 / 1:1 / 4:3",
         () ->
-            new AlertDialog.Builder(this)
+            new NovaDialog(this)
                 .setTitle("Пропорции карточек")
                 .setSingleChoiceItems(
                     new String[] {"16:9", "1:1", "4:3"},
@@ -1589,7 +1591,7 @@ public class MainActivity extends Activity {
         "Пропорции мобильных карточек",
         "1:1 / 16:9 / 4:3",
         () ->
-            new AlertDialog.Builder(this)
+            new NovaDialog(this)
                 .setTitle("Мобильные карточки")
                 .setSingleChoiceItems(
                     new String[] {"16:9", "1:1", "4:3"},
@@ -1618,7 +1620,7 @@ public class MainActivity extends Activity {
         "Тема фона",
         "Ночная / Закат / Океан",
         () ->
-            new AlertDialog.Builder(this)
+            new NovaDialog(this)
                 .setTitle("Тема фона")
                 .setSingleChoiceItems(
                     new String[] {"Ночная", "Закат", "Океан"},
@@ -1645,6 +1647,20 @@ public class MainActivity extends Activity {
   void statusSettings(TvSettingsPanel p) {
     p.title("━", "Строка состояния", "");
     toggle(p, "━", "Показывать строку состояния", "show_status", true);
+    p.action("▣", "Значки и текст", "", () -> chooseSetting("status_label_mode", "Значки и текст",
+        new String[] {"Только значки", "Только текст", "Значки и текст"}, 2));
+    slider(p, "◯", "Скругление", "status_radius", 100, 0, 100, " %");
+    slider(p, "◐", "Прозрачность фона", "status_transparency", 30, 0, 100, " %");
+    slider(p, "T", "Размер текста", "status_size", 15, 10, 28, " sp");
+    slider(p, "▣", "Размер значков", "status_icon_size", 20, 12, 28, " dp");
+    slider(p, "↔", "Интервал", "status_gap", 8, 0, 24, " dp");
+    slider(p, "↔", "Внутренние поля", "status_padding", 8, 0, 24, " dp");
+    toggle(p, "◐", "Тень текста", "status_shadow", false);
+    toggle(p, "◐", "Тень панели", "status_elevation", false);
+    p.action("◐", "Цвет текста и значков", "", () -> chooseColor("status_color", false));
+    p.action("◐", "Цвет фона", "", () -> chooseColor("status_background", false));
+    p.action("↔", "Расположение", "", () -> chooseSetting("status_alignment", "Расположение",
+        new String[] {"Перед кнопками", "После кнопок"}, 1));
     p.action("◷", "Часы", "Размер, цвет, формат", () -> p.open(this::clockSettings));
     p.action("☁", "Погода", "Город, размер, цвет", () -> p.open(this::weatherSettings));
     toggle(p, "◉", "Показывать подключение", "show_network", true);
@@ -1655,6 +1671,16 @@ public class MainActivity extends Activity {
         "Уведомления",
         "Доступ и список уведомлений",
         () -> p.open(this::notificationSettings));
+  }
+
+  private void chooseSetting(String key, String title, String[] options, int defaultValue) {
+    new NovaDialog(this).setTitle(title)
+        .setSingleChoiceItems(options, getPreferences(0).getInt(key, defaultValue), (dialog, index) -> {
+          setInt(key, index);
+          dialog.dismiss();
+        })
+        .setNegativeButton("Отмена", null)
+        .show();
   }
 
   void clockSettings(TvSettingsPanel p) {
@@ -1668,7 +1694,7 @@ public class MainActivity extends Activity {
         "Формат часов",
         "24 / 12 часов / дата и время",
         () ->
-            new AlertDialog.Builder(this)
+            new NovaDialog(this)
                 .setTitle("Формат часов")
                 .setItems(
                     new String[] {"24 часа — HH:mm", "12 часов — hh:mm a", "Дата и время"},
@@ -1707,7 +1733,7 @@ public class MainActivity extends Activity {
         "Последняя ошибка",
         getPreferences(0).getString("weather_error", "Ошибок нет"),
         () ->
-            new AlertDialog.Builder(this)
+            new NovaDialog(this)
                 .setTitle("Диагностика погоды")
                 .setMessage(
                     getPreferences(0).getString("weather_error", "Ошибок нет")
@@ -1749,7 +1775,7 @@ public class MainActivity extends Activity {
   void chooseColor(String key, boolean reopen) {
     String[] names = {"Розовый", "Бирюзовый", "Голубой", "Белый", "Тёмный"};
     int[] colors = {0xffff94b2, 0xff8de7d3, 0xff9ecaff, 0xfff5f7ff, 0xdd222c40};
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle("Цвет")
         .setItems(
             names,
@@ -1821,7 +1847,7 @@ public class MainActivity extends Activity {
   }
 
   void resetAppearance() {
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle("Сбросить оформление?")
         .setMessage("Избранное, категории и установленные приложения сохранятся.")
         .setPositiveButton(
@@ -1882,7 +1908,11 @@ public class MainActivity extends Activity {
       "keep_screen_on",
       "mobile_ratio",
       "show_notifications",
-      "hide_empty_notifications"
+      "hide_empty_notifications",
+      "mobile_icon_mode", "mobile_icon_scale", "mobile_icon_padding", "mobile_radius",
+      "mobile_card_color", "status_label_mode", "status_radius", "status_transparency",
+      "status_size", "status_icon_size", "status_gap", "status_padding",
+      "status_shadow", "status_elevation", "status_color", "status_background", "status_alignment"
     };
   }
 
@@ -1894,7 +1924,7 @@ public class MainActivity extends Activity {
         "",
         () -> {
           EditText name = new EditText(this);
-          new AlertDialog.Builder(this)
+          new NovaDialog(this)
               .setTitle("Название профиля")
               .setView(name)
               .setPositiveButton(
@@ -1929,7 +1959,7 @@ public class MainActivity extends Activity {
           name,
           "Применить / удалить",
           () ->
-              new AlertDialog.Builder(this)
+              new NovaDialog(this)
                   .setTitle(name)
                   .setItems(
                       new String[] {"Применить", "Удалить"},
@@ -1999,7 +2029,7 @@ public class MainActivity extends Activity {
       Toast.makeText(this, "Телевизор не предоставил список входов", Toast.LENGTH_LONG).show();
       return;
     }
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle("Источники сигнала")
         .setItems(names, (d, n) -> safeStart(tvInputIntent(inputs.get(n))))
         .setNegativeButton("Закрыть", null)
@@ -2023,11 +2053,27 @@ public class MainActivity extends Activity {
         notificationGranted() ? "Предоставлен" : "Требуется ваше разрешение в Android",
         android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
     if (notificationGranted()) {
-      for (NotificationAccess.Item item : NotificationAccess.snapshot())
-        p.action(
-            "♧",
-            item.title,
-            item.pkg,
+      p.toggle("▣", "Показывать системные уведомления", "Включая фоновые службы",
+          getPreferences(0).getBoolean("show_ongoing_notifications", false), value -> {
+            getPreferences(0).edit().putBoolean("show_ongoing_notifications", value).apply();
+            p.refresh();
+            updateClock();
+          });
+      List<NotificationAccess.Item> notifications = visibleNotifications();
+      for (NotificationAccess.Item item : notifications) {
+        String app = "Приложение";
+        Drawable icon = getDrawable(R.drawable.nova_bell);
+        try {
+          ApplicationInfo info = getPackageManager().getApplicationInfo(item.pkg, 0);
+          app = info.loadLabel(getPackageManager()).toString();
+          icon = info.loadIcon(getPackageManager());
+        } catch (PackageManager.NameNotFoundException ignored) {
+          // Some notification senders are not visible to NovaTV.
+        }
+        p.notification(
+            item.title.isEmpty() ? app : item.title,
+            item.text.isEmpty() ? (item.title.isEmpty() ? "" : app) : app + " · " + item.text,
+            icon,
             () -> {
               Intent launch = getPackageManager().getLeanbackLaunchIntentForPackage(item.pkg);
               if (launch == null) launch = getPackageManager().getLaunchIntentForPackage(item.pkg);
@@ -2036,9 +2082,14 @@ public class MainActivity extends Activity {
                 guardApp(item.pkg, () -> safeStart(target));
               }
             });
-      if (NotificationAccess.snapshot().isEmpty()) p.section("Нет уведомлений");
+      }
+      if (notifications.isEmpty()) p.section("Нет уведомлений");
       p.action("▷", "Сейчас играет", "Активные медиасессии", this::showNowPlaying);
     }
+  }
+
+  private List<NotificationAccess.Item> visibleNotifications() {
+    return NotificationAccess.snapshot(getPreferences(0).getBoolean("show_ongoing_notifications", false));
   }
 
   void showNowPlaying() {
@@ -2059,7 +2110,7 @@ public class MainActivity extends Activity {
                 ? sessions.get(i).getPackageName()
                 : String.valueOf(metadata.getDescription().getTitle());
       }
-      new AlertDialog.Builder(this)
+      new NovaDialog(this)
           .setTitle("Сейчас играет")
           .setItems(
               titles,
@@ -2300,7 +2351,7 @@ public class MainActivity extends Activity {
 
   void fontSettings() {
     float scale = getPreferences(0).getFloat("font_scale", 0.8f);
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle("Размер шрифта")
         .setSingleChoiceItems(
             new String[] {"Маленький", "Средний", "Большой"},
@@ -2344,7 +2395,7 @@ public class MainActivity extends Activity {
             + " МБ\nНайдено приложений: "
             + installed.size()
             + "\nВерсия NovaTV: 0.6.0";
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle("Диагностика устройства")
         .setMessage(s)
         .setPositiveButton("Закрыть", null)
@@ -2457,7 +2508,7 @@ public class MainActivity extends Activity {
     EditText name = new EditText(this);
     name.setSingleLine(true);
     AlertDialog dialog =
-        new AlertDialog.Builder(this)
+        new NovaDialog(this)
             .setTitle("Название категории")
             .setView(name)
             .setPositiveButton("Создать", null)
@@ -2495,7 +2546,7 @@ public class MainActivity extends Activity {
       selected[i] =
           category.equals(getPreferences(0).getString("category_" + installed.get(i).pkg, ""));
     }
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle(category + ": приложения")
         .setMultiChoiceItems(names, selected, (d, n, value) -> selected[n] = value)
         .setPositiveButton(
@@ -2515,7 +2566,7 @@ public class MainActivity extends Activity {
   }
 
   void categoryActions(String category) {
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle(category)
         .setItems(
             new String[] {
@@ -2544,7 +2595,7 @@ public class MainActivity extends Activity {
                 input.setSingleLine(true);
                 input.setText(category);
                 AlertDialog dialog =
-                    new AlertDialog.Builder(this)
+                    new NovaDialog(this)
                         .setTitle("Новое название категории")
                         .setView(input)
                         .setPositiveButton("Сохранить", null)
@@ -2586,7 +2637,7 @@ public class MainActivity extends Activity {
                                 }));
                 dialog.show();
               } else
-                new AlertDialog.Builder(this)
+                new NovaDialog(this)
                     .setTitle("Удалить категорию «" + category + "»?")
                     .setMessage("Приложения останутся установленными.")
                     .setPositiveButton(
@@ -2621,7 +2672,7 @@ public class MainActivity extends Activity {
       return;
     }
     categories.add(0, "Без категории");
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle(app.label + ": категория")
         .setItems(
             categories.toArray(new String[0]),
@@ -2640,7 +2691,7 @@ public class MainActivity extends Activity {
     String[] choices = new String[installed.size() + 1];
     choices[0] = "Выключен";
     for (int i = 0; i < installed.size(); i++) choices[i + 1] = installed.get(i).label;
-    new AlertDialog.Builder(this)
+    new NovaDialog(this)
         .setTitle("Запуск приложения при старте NovaTV")
         .setItems(
             choices,
@@ -2670,6 +2721,8 @@ public class MainActivity extends Activity {
             getPreferences(0).getInt("weather_color", MUTED));
     weather.setSingleLine(true);
     weather.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    weather.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.nova_weather, 0, 0, 0);
+    weather.setCompoundDrawablePadding(dp(5));
     line.addView(weather, new LinearLayout.LayoutParams(0, -1, 1));
     updateWeatherAppearance();
   }
@@ -2691,7 +2744,7 @@ public class MainActivity extends Activity {
     input.setSingleLine(true);
     input.setText(getPreferences(0).getString("weather_city", ""));
     AlertDialog dialog =
-        new AlertDialog.Builder(this)
+        new NovaDialog(this)
             .setTitle("Поиск города")
             .setMessage("Введите город и нажмите «Найти». Данные Open-Meteo.")
             .setView(input)
@@ -2739,7 +2792,7 @@ public class MainActivity extends Activity {
                                             + place.optString("country");
                                   }
                                   dialog.dismiss();
-                                  new AlertDialog.Builder(this)
+                                  new NovaDialog(this)
                                       .setTitle("Выберите город")
                                       .setItems(
                                           labels,
