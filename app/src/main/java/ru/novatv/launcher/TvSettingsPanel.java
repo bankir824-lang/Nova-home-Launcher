@@ -17,7 +17,18 @@ final class TvSettingsPanel extends Dialog {
   }
 
   private final MainActivity host;
-  private final ArrayDeque<Page> pages = new ArrayDeque<>();
+  private static final class PageState {
+    final Page page;
+    Object focusKey;
+    int scrollY;
+
+    PageState(Page page) {
+      this.page = page;
+    }
+  }
+
+  private final ArrayDeque<PageState> pages = new ArrayDeque<>();
+  private ScrollView pageScroll;
   private LinearLayout body;
   private View first;
   private String currentTitle = "";
@@ -26,13 +37,13 @@ final class TvSettingsPanel extends Dialog {
     return title.equals(currentTitle);
   }
 
-  private final int accent;
+  private int accent;
 
   TvSettingsPanel(MainActivity host, int accent, Page root) {
     super(host);
     this.host = host;
     this.accent = accent;
-    pages.push(root);
+    pages.push(new PageState(root));
     setOnDismissListener(d -> host.previewSettings(false));
   }
 
@@ -52,7 +63,8 @@ final class TvSettingsPanel extends Dialog {
   }
 
   void open(Page page) {
-    pages.push(page);
+    rememberPage();
+    pages.push(new PageState(page));
     drawPage();
   }
 
@@ -64,8 +76,18 @@ final class TvSettingsPanel extends Dialog {
     } else dismiss();
   }
 
+  private void rememberPage() {
+    if (pageScroll == null) return;
+    PageState state = pages.peek();
+    View focused = pageScroll.findFocus();
+    state.focusKey = focused == null ? null : focused.getTag();
+    state.scrollY = pageScroll.getScrollY();
+  }
+
   private void drawPage() {
+    accent = host.accent();
     ScrollView scroll = new ScrollView(host);
+    pageScroll = scroll;
     scroll.setFillViewport(true);
     scroll.setVerticalScrollBarEnabled(false);
     GradientDrawable bg =
@@ -78,8 +100,18 @@ final class TvSettingsPanel extends Dialog {
     scroll.addView(body);
     setContentView(scroll);
     first = null;
-    pages.peek().build(this);
-    if (first != null) first.requestFocus();
+    PageState state = pages.peek();
+    state.page.build(this);
+    View target = state.focusKey == null ? null : scroll.findViewWithTag(state.focusKey);
+    if (target == null || !target.isFocusable() || !target.isEnabled()) target = first;
+    if (target != null) target.requestFocus();
+    scroll.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+      @Override
+      public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+        v.removeOnLayoutChangeListener(this);
+        if (pageScroll == scroll) scroll.scrollTo(0, state.scrollY);
+      }
+    });
   }
 
   void title(String icon, String title, String subtitle) {
@@ -104,6 +136,7 @@ final class TvSettingsPanel extends Dialog {
   private LinearLayout row(String icon, String title, String subtitle) {
     LinearLayout row = host.horizontal();
     row.setContentDescription(title);
+    row.setTag("setting:" + title);
     row.setPadding(host.dp(12), host.dp(9), host.dp(12), host.dp(9));
     row.setMinimumHeight(host.dp(52));
     row.setFocusable(true);
@@ -133,7 +166,12 @@ final class TvSettingsPanel extends Dialog {
   }
 
   void action(String icon, String title, String subtitle, Runnable action) {
+    action("setting:" + title, icon, title, subtitle, action);
+  }
+
+  void action(String key, String icon, String title, String subtitle, Runnable action) {
     LinearLayout row = row(icon, title, subtitle);
+    row.setTag(key);
     TextView arrow = host.label("›", 24, accent);
     row.addView(arrow);
     row.setOnClickListener(v -> action.run());
@@ -147,6 +185,7 @@ final class TvSettingsPanel extends Dialog {
   }
 
   void refresh() {
+    rememberPage();
     drawPage();
   }
 
@@ -203,6 +242,7 @@ final class TvSettingsPanel extends Dialog {
     TextView text = host.label(icon + "  " + title + " · " + value + suffix, 15, 0xffedf2ff);
     container.addView(text);
     SeekBar seek = new SeekBar(host);
+    seek.setTag("slider:" + title);
     seek.setFocusable(true);
     seek.setFocusableInTouchMode(true);
     seek.setMax(max - min);
