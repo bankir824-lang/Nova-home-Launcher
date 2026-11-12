@@ -1728,7 +1728,7 @@ public class MainActivity extends Activity {
   }
 
   void weatherSettings(TvSettingsPanel p) {
-    p.title("☁", "Погода", "Open-Meteo · резерв wttr.in");
+    p.title("☁", "Погода", "Open-Meteo · резервный прогноз MET Norway (CC BY 4.0)");
     toggle(p, "☁", "Показывать погоду", "show_weather", true);
     p.action(
         "⌖", "Город", getPreferences(0).getString("weather_city", "Не выбран"), this::weatherCity);
@@ -2923,7 +2923,7 @@ public class MainActivity extends Activity {
     } catch (PackageManager.NameNotFoundException ignored) {
       // The package manager can be unavailable during shutdown.
     }
-    return new WeatherRepository(version);
+    return new WeatherRepository(version, getSharedPreferences("met_forecast_cache", MODE_PRIVATE));
   }
 
   void loadWeather() {
@@ -2988,7 +2988,7 @@ public class MainActivity extends Activity {
                     + " · "
                     + forecast.provider
                     + " · "
-                    + new SimpleDateFormat("HH:mm", new Locale("ru")).format(new Date());
+                    + new SimpleDateFormat("HH:mm", new Locale("ru")).format(new Date(forecast.fetchedAt));
             ok = true;
           } catch (Exception e) {
             weatherError = WeatherRepository.describe(e);
