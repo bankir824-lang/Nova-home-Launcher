@@ -741,13 +741,32 @@ public class MainActivity extends Activity {
                 rowKey.equals("mobile_order") ? "mobile_ratio" : "card_ratio",
                 rowKey.equals("mobile_order") ? 1 : 0);
     int height = Appearance.cardHeight(width, ratio, titles);
-    content.addView(scroll, lp(-1, height + 18));
+    int availableDp =
+        (int)
+                (getResources().getDisplayMetrics().widthPixels
+                    / getResources().getDisplayMetrics().density)
+            - getPreferences(0).getInt("margin_left", 28)
+            - getPreferences(0).getInt("margin_right", 28);
+    final int columns =
+        Math.max(1, availableDp / (width + getPreferences(0).getInt("card_gap", 10)));
+    final int maxRows =
+        favoritesRow ? 1 : Appearance.clamp(getPreferences(0).getInt("grid_rows", 3), 1, 3);
+    int rows = Math.min(maxRows, Math.max(1, (list.size() + columns - 1) / columns));
+    content.addView(scroll, lp(-1, (height + 12) * rows + 6));
     appRows.add(scroll);
-    LinearLayout row = horizontal();
-    row.setPadding(dp(6), dp(7), dp(6), dp(7));
-    scroll.addView(row);
+    LinearLayout grid = vertical();
+    scroll.addView(grid);
+    List<LinearLayout> gridRows = new ArrayList<>();
+    for (int n = 0; n < rows; n++) {
+      LinearLayout line = horizontal();
+      line.setPadding(dp(6), dp(6), dp(6), dp(6));
+      grid.addView(line, lp(-2, height + 12));
+      gridRows.add(line);
+    }
+    int cardIndex = 0;
     for (App a : list) {
       if (!showHidden && readIds("hidden").contains(a.pkg)) continue;
+      LinearLayout row = gridRows.get((cardIndex++ / columns) % rows);
       final int cardWidth = width;
       final int radius = getPreferences(0).getInt("card_radius", 10);
       final int cardColor = getPreferences(0).getInt("card_color", 0xdd222c40);
@@ -838,13 +857,20 @@ public class MainActivity extends Activity {
                       || key == KeyEvent.KEYCODE_DPAD_RIGHT
                       || key == KeyEvent.KEYCODE_DPAD_UP
                       || key == KeyEvent.KEYCODE_DPAD_DOWN)) {
-                reorder(
-                    a,
-                    rowKey,
-                    list,
-                    (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_UP)
-                        ? -1
-                        : 1);
+                int index = list.indexOf(a);
+                int target =
+                    Appearance.neighbor(
+                        index,
+                        list.size(),
+                        columns,
+                        rows,
+                        key == KeyEvent.KEYCODE_DPAD_LEFT
+                            ? -1
+                            : key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : 0,
+                        key == KeyEvent.KEYCODE_DPAD_UP
+                            ? -1
+                            : key == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : 0);
+                if (target >= 0) reorder(a, rowKey, list, target - index);
                 return true;
               }
               if (key != KeyEvent.KEYCODE_DPAD_CENTER
@@ -1412,6 +1438,7 @@ public class MainActivity extends Activity {
     p.title("▭", "Карточки", "");
     toggle(p, "T", "Показывать название приложения", "card_titles", false);
     toggle(p, "▧", "Использовать TV-баннеры", "use_banners", true);
+    slider(p, "▦", "Строк приложений в категории", "grid_rows", 3, 1, 3, "");
     slider(p, "▭", "Размер карточки", "card_width", 126, 80, 240, " dp");
     slider(p, "◯", "Радиус скругления", "card_radius", 10, 0, 28, " dp");
     slider(p, "↔", "Расстояние между карточками", "card_gap", 10, 2, 32, " dp");
@@ -1686,6 +1713,7 @@ public class MainActivity extends Activity {
   String[] appearanceKeys() {
     return new String[] {
       "card_width",
+      "grid_rows",
       "card_titles",
       "card_ratio",
       "card_radius",

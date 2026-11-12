@@ -22,9 +22,13 @@ import org.robolectric.shadows.ShadowDialog;
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class TvInterfaceTest {
   private MainActivity create() {
+    return create(6);
+  }
+
+  private MainActivity create(int count) {
     android.app.Application app = RuntimeEnvironment.getApplication();
     app.getSharedPreferences("MainActivity", 0).edit().clear().apply();
-    for (int n = 0; n < 6; n++) {
+    for (int n = 0; n < count; n++) {
       ResolveInfo info = new ResolveInfo();
       info.activityInfo = new ActivityInfo();
       info.activityInfo.packageName = "test.tv.app" + n;
@@ -145,6 +149,19 @@ public class TvInterfaceTest {
     assertTrue(dialog.isShowing());
     assertFalse(dialog instanceof TvSettingsPanel);
     dialog.dismiss();
+    a.finish();
+  }
+
+  @Test
+  public void manyApplicationsUseMultipleRemoteNavigableRows() {
+    MainActivity a = create(15);
+    View first = a.getWindow().getDecorView().findViewWithTag("app_order:test.tv.app0"),
+        last = a.getWindow().getDecorView().findViewWithTag("app_order:test.tv.app8");
+    assertNotNull(first);
+    assertNotNull(last);
+    assertNotSame(first.getParent(), last.getParent());
+    assertTrue(first.isFocusable());
+    assertTrue(last.isFocusable());
     a.finish();
   }
 
