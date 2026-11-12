@@ -48,7 +48,10 @@ public class TvInterfaceTest {
       Intent launch = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
       shadowOf(app.getPackageManager()).addResolveInfoForIntent(launch, info);
     }
-    return Robolectric.buildActivity(MainActivity.class).create().start().resume().visible().get();
+    MainActivity activity =
+        Robolectric.buildActivity(MainActivity.class).create().start().resume().visible().get();
+    shadowOf(android.os.Looper.getMainLooper()).idle();
+    return activity;
   }
 
   @Test
@@ -120,10 +123,12 @@ public class TvInterfaceTest {
         View.MeasureSpec.makeMeasureSpec(826, View.MeasureSpec.EXACTLY),
         View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY));
     decor.layout(0, 0, 826, 1080);
+    shadowOf(android.os.Looper.getMainLooper()).idle();
     View row = panel.getCurrentFocus();
     assertNotNull(row);
     assertEquals("Приложение 1", String.valueOf(row.getContentDescription()));
     assertTrue(row.isFocused());
+    assertTrue("Строка должна быть присоединена к окну", row.isAttachedToWindow());
     panel.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
     panel.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
     Intent launched = shadowOf(a).getNextStartedActivity();
@@ -162,6 +167,87 @@ public class TvInterfaceTest {
     assertNotSame(first.getParent(), last.getParent());
     assertTrue(first.isFocusable());
     assertTrue(last.isFocusable());
+    a.finish();
+  }
+
+  private void layoutRemoteTarget(View decor, int width) {
+    decor.measure(
+        View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY));
+    decor.layout(0, 0, width, 1080);
+    shadowOf(android.os.Looper.getMainLooper()).idle();
+  }
+
+  private android.app.AlertDialog contextMenu() {
+    Dialog dialog = ShadowDialog.getLatestDialog();
+    assertTrue(dialog instanceof android.app.AlertDialog);
+    android.app.AlertDialog menu = (android.app.AlertDialog) dialog;
+    assertTrue(menu.isShowing());
+    android.widget.ListAdapter adapter = menu.getListView().getAdapter();
+    boolean favorite = false, move = false;
+    for (int n = 0; n < adapter.getCount(); n++) {
+      String item = String.valueOf(adapter.getItem(n));
+      assertNotEquals("Открыть", item);
+      favorite |= item.equals("Добавить в избранное");
+      move |= item.equals("Переместить приложение");
+    }
+    assertTrue(favorite);
+    assertTrue(move);
+    return menu;
+  }
+
+  @Test
+  public void mainCardShortOkLaunchesExactlyOnce() {
+    MainActivity a = create();
+    layoutRemoteTarget(a.getWindow().getDecorView(), 1920);
+    View card = a.getWindow().getDecorView().findViewWithTag("app_order:test.tv.app0");
+    card.setFocusableInTouchMode(true);
+    card.requestFocus();
+    assertTrue("Карточка должна получить фокус пульта", card.hasFocus());
+    assertTrue(card.isAttachedToWindow());
+    a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER));
+    a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER));
+    assertNotNull(shadowOf(a).getNextStartedActivity());
+    assertNull(shadowOf(a).getNextStartedActivity());
+    a.finish();
+  }
+
+  @Test
+  public void mainCardHoldingOpensMenuAndStillAllowsFavorites() {
+    MainActivity a = create();
+    layoutRemoteTarget(a.getWindow().getDecorView(), 1920);
+    View card = a.getWindow().getDecorView().findViewWithTag("app_order:test.tv.app0");
+    card.setFocusableInTouchMode(true);
+    card.requestFocus();
+    assertTrue("Карточка должна получить фокус пульта", card.hasFocus());
+    assertTrue(card.isAttachedToWindow());
+    a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER));
+    shadowOf(android.os.Looper.getMainLooper())
+        .idleFor(java.time.Duration.ofMillis(ViewConfiguration.getLongPressTimeout() + 1));
+    android.app.AlertDialog menu = contextMenu();
+    card.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER));
+    assertNull(shadowOf(a).getNextStartedActivity());
+    menu.getListView().performItemClick(null, 0, 0);
+    assertTrue(a.favoriteIds().contains("test.tv.app0"));
+    menu.dismiss();
+    a.finish();
+  }
+
+  @Test
+  public void libraryLongEnterDoesNotLaunchAfterContextMenu() {
+    MainActivity a = create();
+    a.openLibrary();
+    TvSettingsPanel panel = (TvSettingsPanel) ShadowDialog.getLatestDialog();
+    layoutRemoteTarget(panel.getWindow().getDecorView(), 826);
+    View row = panel.getCurrentFocus();
+    panel.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+    shadowOf(android.os.Looper.getMainLooper())
+        .idleFor(java.time.Duration.ofMillis(ViewConfiguration.getLongPressTimeout() + 1));
+    android.app.AlertDialog menu = contextMenu();
+    row.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
+    assertNull(shadowOf(a).getNextStartedActivity());
+    menu.dismiss();
+    panel.dismiss();
     a.finish();
   }
 

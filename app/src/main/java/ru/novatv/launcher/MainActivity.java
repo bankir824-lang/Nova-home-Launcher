@@ -841,56 +841,34 @@ public class MainActivity extends Activity {
             contextMenu(a, favoritesRow, rowKey);
             return true;
           });
+      RemoteOkHandler remote = RemoteOkHandler.bind(card);
       card.setOnKeyListener(
-          new View.OnKeyListener() {
-            final CenterPress press = new CenterPress();
-            final Runnable hold =
-                () -> {
-                  if (card.hasFocus() && hasWindowFocus() && press.hold()) card.performLongClick();
-                };
-
-            public boolean onKey(View v, int key, KeyEvent event) {
-              if (movingPackage != null
-                  && movingPackage.equals(a.pkg)
-                  && event.getAction() == KeyEvent.ACTION_DOWN
-                  && (key == KeyEvent.KEYCODE_DPAD_LEFT
-                      || key == KeyEvent.KEYCODE_DPAD_RIGHT
-                      || key == KeyEvent.KEYCODE_DPAD_UP
-                      || key == KeyEvent.KEYCODE_DPAD_DOWN)) {
-                int index = list.indexOf(a);
-                int target =
-                    Appearance.neighbor(
-                        index,
-                        list.size(),
-                        columns,
-                        rows,
-                        key == KeyEvent.KEYCODE_DPAD_LEFT
-                            ? -1
-                            : key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : 0,
-                        key == KeyEvent.KEYCODE_DPAD_UP
-                            ? -1
-                            : key == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : 0);
-                if (target >= 0) reorder(a, rowKey, list, target - index);
-                return true;
-              }
-              if (key != KeyEvent.KEYCODE_DPAD_CENTER
-                  && key != KeyEvent.KEYCODE_ENTER
-                  && key != KeyEvent.KEYCODE_NUMPAD_ENTER) return false;
-              if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (event.getRepeatCount() == 0) {
-                  press.down();
-                  handler.postDelayed(hold, ViewConfiguration.getLongPressTimeout());
-                }
-                return true;
-              }
-              if (event.getAction() == KeyEvent.ACTION_UP) {
-                handler.removeCallbacks(hold);
-                boolean click = press.up(event.isCanceled());
-                if (click) card.performClick();
-                return true;
-              }
+          (v, key, event) -> {
+            if (movingPackage != null
+                && movingPackage.equals(a.pkg)
+                && event.getAction() == KeyEvent.ACTION_DOWN
+                && (key == KeyEvent.KEYCODE_DPAD_LEFT
+                    || key == KeyEvent.KEYCODE_DPAD_RIGHT
+                    || key == KeyEvent.KEYCODE_DPAD_UP
+                    || key == KeyEvent.KEYCODE_DPAD_DOWN)) {
+              remote.cancel();
+              int index = list.indexOf(a);
+              int target =
+                  Appearance.neighbor(
+                      index,
+                      list.size(),
+                      columns,
+                      rows,
+                      key == KeyEvent.KEYCODE_DPAD_LEFT
+                          ? -1
+                          : key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : 0,
+                      key == KeyEvent.KEYCODE_DPAD_UP
+                          ? -1
+                          : key == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : 0);
+              if (target >= 0) reorder(a, rowKey, list, target - index);
               return true;
             }
+            return remote.onKey(v, key, event);
           });
       if (a.pkg.equals(movingPackage) && rowKey.equals(movingRowKey)) card.requestFocus();
     }

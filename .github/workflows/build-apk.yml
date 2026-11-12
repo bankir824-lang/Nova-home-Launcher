@@ -7,6 +7,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -25,13 +26,15 @@ jobs:
         run: gradle --no-daemon testDebugUnitTest lintDebug assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: NovaTV-Launcher-v0.6-debug
+          name: NovaTV-Launcher-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
       - name: Отчёты и изображения UI
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NovaTV-v0.6-checks
+          name: NovaTV-checks
           path: |
             app/build/reports/
             app/build/test-results/

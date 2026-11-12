@@ -165,36 +165,7 @@ final class TvSettingsPanel extends Dialog {
           longClick.run();
           return true;
         });
-    row.setOnKeyListener(
-        new View.OnKeyListener() {
-          final CenterPress press = new CenterPress();
-          final android.os.Handler handler =
-              new android.os.Handler(android.os.Looper.getMainLooper());
-          final Runnable hold =
-              () -> {
-                if (row.hasFocus() && getWindow().getDecorView().hasWindowFocus() && press.hold())
-                  row.performLongClick();
-              };
-
-          public boolean onKey(View v, int key, android.view.KeyEvent event) {
-            if (key != KeyEvent.KEYCODE_DPAD_CENTER
-                && key != KeyEvent.KEYCODE_ENTER
-                && key != KeyEvent.KEYCODE_NUMPAD_ENTER) return false;
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-              if (event.getRepeatCount() == 0) {
-                press.down();
-                handler.postDelayed(hold, ViewConfiguration.getLongPressTimeout());
-              }
-              return true;
-            }
-            if (event.getAction() == KeyEvent.ACTION_UP) {
-              handler.removeCallbacks(hold);
-              if (press.up(event.isCanceled())) row.performClick();
-              return true;
-            }
-            return true;
-          }
-        });
+    RemoteOkHandler.bind(row);
   }
 
   void toggle(
