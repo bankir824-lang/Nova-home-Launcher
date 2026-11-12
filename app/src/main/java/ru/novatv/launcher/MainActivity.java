@@ -20,6 +20,8 @@ public class MainActivity extends Activity {
   private String movingPackage, movingOrder;
   private boolean movingFavorites;
   private TextView weather;
+  private final WeatherRequests weatherRequests = new WeatherRequests();
+  private boolean showHidden;
   private final java.util.concurrent.ExecutorService worker =
       java.util.concurrent.Executors.newSingleThreadExecutor();
   private final Runnable ticker =
@@ -128,6 +130,14 @@ public class MainActivity extends Activity {
     refreshApps();
     render();
     handler.post(ticker);
+    if (b == null) {
+      String auto = getPreferences(0).getString("autostart", "");
+      for (App app : installed)
+        if (app.pkg.equals(auto)) {
+          launch(app);
+          break;
+        }
+    }
   }
 
   void refreshApps() {
@@ -178,7 +188,8 @@ public class MainActivity extends Activity {
     sc.addView(page);
     header();
     gap(page, 17);
-    banner();
+    weatherPanel();
+    if (getPreferences(0).getBoolean("show_banner", false)) banner();
     gap(page, 20);
     content = vertical();
     page.addView(content);
@@ -203,6 +214,7 @@ public class MainActivity extends Activity {
   }
 
   void updateClock() {
+    if (weather != null) loadWeather();
     if (clock != null)
       clock.setText(
           new SimpleDateFormat("EEE, d MMM  HH:mm", new Locale("ru", "RU")).format(new Date()));
@@ -270,23 +282,33 @@ public class MainActivity extends Activity {
   }
 
   void home() {
-    clear("Избранные приложения");
-    List<App> fav = getFavorites();
-    if (fav.isEmpty())
-      content.addView(
-          label("Удерживайте OK на карточке, чтобы добавить приложение в избранное", 15, MUTED));
-    else rowApps(fav, true);
+    showHidden = false;
+    clear(
+        movingPackage == null
+            ? "Главный экран"
+            : "Перемещение: стрелки · OK — сохранить · Назад — отменить");
+    if (getPreferences(0).getBoolean("show_favorites", true)) {
+      content.addView(label("Избранные приложения", 22, WHITE));
+      List<App> fav = getFavorites();
+      if (fav.isEmpty())
+        content.addView(
+            label("Удерживайте OK на карточке, чтобы добавить приложение в избранное", 15, MUTED));
+      else rowApps(fav, true);
+    }
     gap(content, 18);
     content.addView(label("Все приложения", 22, WHITE));
     gap(content, 9);
     rowApps(installed);
-    gap(content, 15);
-    weather =
-        label(
-            getPreferences(0).getString("weather_cache", "Погода: укажите город в настройках"),
-            14,
-            MUTED);
-    content.addView(weather);
+    for (String category : readIds("categories")) {
+      List<App> apps = new ArrayList<>();
+      for (App app : installed)
+        if (category.equals(getPreferences(0).getString("category_" + app.pkg, ""))) apps.add(app);
+      gap(content, 14);
+      content.addView(label(category, 22, WHITE));
+      if (apps.isEmpty())
+        content.addView(label("Удерживайте OK на приложении → Категория", 14, MUTED));
+      else rowApps(apps);
+    }
     loadWeather();
   }
 
@@ -367,6 +389,8 @@ public class MainActivity extends Activity {
     row.setPadding(dp(6), dp(7), dp(6), dp(7));
     scroll.addView(row);
     for (App a : list) {
+      if (!showHidden && readIds("hidden").contains(a.pkg)) continue;
+      final int cardWidth = getPreferences(0).getInt("card_size", 176);
       LinearLayout card = vertical();
       card.setGravity(Gravity.CENTER);
       card.setPadding(dp(10), dp(10), dp(10), dp(10));
@@ -380,7 +404,7 @@ public class MainActivity extends Activity {
             if (f) bg.setStroke(dp(2), WHITE);
             card.setBackground(bg);
           });
-      marginAdd(row, card, 176, 128, 14);
+      marginAdd(row, card, cardWidth, 128, 14);
       ImageView icon = new ImageView(this);
       icon.setImageDrawable(a.icon);
       icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -389,7 +413,7 @@ public class MainActivity extends Activity {
       name.setSingleLine(true);
       name.setEllipsize(android.text.TextUtils.TruncateAt.END);
       name.setGravity(Gravity.CENTER);
-      card.addView(name, lp(156, 30));
+      card.addView(name, lp(cardWidth - 20, 30));
       card.setOnClickListener(
           v -> {
             if (movingPackage != null) finishMove();
@@ -454,7 +478,9 @@ public class MainActivity extends Activity {
       "Переместить приложение",
       "Настройки приложения",
       "Информация",
-      "Удалить приложение"
+      "Удалить приложение",
+      "Категория",
+      readIds("hidden").contains(a.pkg) ? "Показать приложение" : "Скрыть приложение"
     };
     new AlertDialog.Builder(this)
         .setTitle(a.label)
@@ -483,6 +509,18 @@ public class MainActivity extends Activity {
                   break;
                 case 3:
                   appInfo(a);
+                  break;
+                case 5:
+                  chooseCategory(a);
+                  break;
+                case 6:
+                  List<String> hidden = readIds("hidden");
+                  if (!hidden.remove(a.pkg)) hidden.add(a.pkg);
+                  getPreferences(0)
+                      .edit()
+                      .putString("hidden", android.text.TextUtils.join("|", hidden))
+                      .apply();
+                  home();
                   break;
                 case 4:
                   safeStart(
@@ -574,6 +612,27 @@ public class MainActivity extends Activity {
 
   void settings() {
     clear("Настройки NovaTV");
+    LinearLayout custom = horizontal();
+    content.addView(custom);
+    action(custom, "Главный экран", this::appearance);
+    action(custom, "Категории", this::manageCategories);
+    action(custom, "Автозапуск", this::autostartSettings);
+    LinearLayout tools = horizontal();
+    content.addView(tools);
+    action(
+        tools,
+        "Скрытые приложения",
+        () -> {
+          showHidden = true;
+          allApps();
+        });
+    action(
+        tools,
+        "Обновить погоду",
+        () -> {
+          getPreferences(0).edit().putLong("weather_time", 0).apply();
+          loadWeather();
+        });
     LinearLayout themes = horizontal();
     content.addView(themes);
     action(themes, "Ночная тема", () -> changeNovaTheme(0));
@@ -644,7 +703,7 @@ public class MainActivity extends Activity {
             + (getFilesDir().getUsableSpace() / 1024 / 1024)
             + " МБ\nНайдено приложений: "
             + installed.size()
-            + "\nВерсия NovaTV: 0.3.0";
+            + "\nВерсия NovaTV: 0.4.0";
     new AlertDialog.Builder(this)
         .setTitle("Диагностика TCL")
         .setMessage(s)
@@ -681,27 +740,251 @@ public class MainActivity extends Activity {
     }
   }
 
-  void weatherCity() {
-    EditText input = new EditText(this);
-    input.setSingleLine(true);
-    input.setText(getPreferences(0).getString("weather_city", ""));
+  void appearance() {
+    String[] names = {"Показывать приветственный баннер", "Показывать избранное"};
+    boolean[] values = {
+      getPreferences(0).getBoolean("show_banner", false),
+      getPreferences(0).getBoolean("show_favorites", true)
+    };
     new AlertDialog.Builder(this)
-        .setTitle("Город для погоды")
-        .setMessage("Введите название города. Прогноз предоставляет Open-Meteo.")
-        .setView(input)
+        .setTitle("Главный экран")
+        .setMultiChoiceItems(names, values, (d, n, checked) -> values[n] = checked)
         .setPositiveButton(
             "Сохранить",
             (d, n) -> {
               getPreferences(0)
                   .edit()
-                  .putString("weather_city", input.getText().toString().trim())
-                  .remove("weather_cache")
-                  .putLong("weather_time", 0)
+                  .putBoolean("show_banner", values[0])
+                  .putBoolean("show_favorites", values[1])
+                  .apply();
+              render();
+            })
+        .setNeutralButton(
+            "Размер карточек",
+            (d, n) ->
+                new AlertDialog.Builder(this)
+                    .setTitle("Размер карточек")
+                    .setSingleChoiceItems(
+                        new String[] {"Компактные", "Обычные", "Крупные"},
+                        getPreferences(0).getInt("card_size", 176) == 144
+                            ? 0
+                            : getPreferences(0).getInt("card_size", 176) == 208 ? 2 : 1,
+                        (dialog, index) -> {
+                          getPreferences(0)
+                              .edit()
+                              .putInt("card_size", new int[] {144, 176, 208}[index])
+                              .apply();
+                          dialog.dismiss();
+                          home();
+                        })
+                    .setNegativeButton("Закрыть", null)
+                    .show())
+        .setNegativeButton("Отмена", null)
+        .show();
+  }
+
+  void manageCategories() {
+    List<String> categories = readIds("categories");
+    String[] choices = new String[categories.size() + 1];
+    choices[0] = "Создать категорию";
+    for (int i = 0; i < categories.size(); i++) choices[i + 1] = "Удалить: " + categories.get(i);
+    new AlertDialog.Builder(this)
+        .setTitle("Категории приложений")
+        .setItems(
+            choices,
+            (d, n) -> {
+              if (n == 0) {
+                EditText name = new EditText(this);
+                name.setSingleLine(true);
+                new AlertDialog.Builder(this)
+                    .setTitle("Название категории")
+                    .setView(name)
+                    .setPositiveButton(
+                        "Создать",
+                        (d2, n2) -> {
+                          String value = name.getText().toString().trim().replace("|", "");
+                          if (value.isEmpty() || categories.contains(value)) return;
+                          categories.add(value);
+                          getPreferences(0)
+                              .edit()
+                              .putString("categories", android.text.TextUtils.join("|", categories))
+                              .apply();
+                          home();
+                        })
+                    .setNegativeButton("Отмена", null)
+                    .show();
+              } else {
+                String category = categories.remove(n - 1);
+                android.content.SharedPreferences.Editor edit =
+                    getPreferences(0)
+                        .edit()
+                        .putString("categories", android.text.TextUtils.join("|", categories));
+                for (App app : installed)
+                  if (category.equals(getPreferences(0).getString("category_" + app.pkg, "")))
+                    edit.remove("category_" + app.pkg);
+                edit.apply();
+                home();
+              }
+            })
+        .setNegativeButton("Закрыть", null)
+        .show();
+  }
+
+  void chooseCategory(App app) {
+    List<String> categories = readIds("categories");
+    if (categories.isEmpty()) {
+      manageCategories();
+      return;
+    }
+    categories.add(0, "Без категории");
+    new AlertDialog.Builder(this)
+        .setTitle(app.label + ": категория")
+        .setItems(
+            categories.toArray(new String[0]),
+            (d, n) -> {
+              getPreferences(0)
+                  .edit()
+                  .putString("category_" + app.pkg, n == 0 ? "" : categories.get(n))
                   .apply();
               home();
             })
         .setNegativeButton("Отмена", null)
         .show();
+  }
+
+  void autostartSettings() {
+    String[] choices = new String[installed.size() + 1];
+    choices[0] = "Выключен";
+    for (int i = 0; i < installed.size(); i++) choices[i + 1] = installed.get(i).label;
+    new AlertDialog.Builder(this)
+        .setTitle("Запуск приложения при старте NovaTV")
+        .setItems(
+            choices,
+            (d, n) -> {
+              getPreferences(0)
+                  .edit()
+                  .putString("autostart", n == 0 ? "" : installed.get(n - 1).pkg)
+                  .apply();
+              Toast.makeText(
+                      this,
+                      "Автозапуск сохранён. Сработает при следующем запуске NovaTV",
+                      Toast.LENGTH_LONG)
+                  .show();
+            })
+        .setNegativeButton("Отмена", null)
+        .show();
+  }
+
+  void weatherPanel() {
+    LinearLayout panel = horizontal();
+    panel.setPadding(dp(16), dp(8), dp(16), dp(8));
+    panel.setBackground(shape(0xbb20334e, 14));
+    page.addView(panel, lp(-1, 64));
+    weather = label("", 17, WHITE);
+    weather.setMaxLines(2);
+    panel.addView(weather, new LinearLayout.LayoutParams(0, -1, 1));
+    action(panel, "Город", this::weatherCity);
+    action(
+        panel,
+        "Обновить",
+        () -> {
+          getPreferences(0).edit().putLong("weather_time", 0).apply();
+          loadWeather();
+        });
+    weather.setText(getPreferences(0).getString("weather_cache", "Погода: выберите город →"));
+  }
+
+  void weatherCity() {
+    EditText input = new EditText(this);
+    input.setSingleLine(true);
+    input.setText(getPreferences(0).getString("weather_city", ""));
+    AlertDialog dialog =
+        new AlertDialog.Builder(this)
+            .setTitle("Поиск города")
+            .setMessage("Введите город и нажмите «Найти». Данные Open-Meteo.")
+            .setView(input)
+            .setPositiveButton("Найти", null)
+            .setNegativeButton("Отмена", null)
+            .create();
+    dialog.setOnShowListener(
+        d -> {
+          input.requestFocus();
+          dialog
+              .getButton(AlertDialog.BUTTON_POSITIVE)
+              .setOnClickListener(
+                  v -> {
+                    String query = input.getText().toString().trim();
+                    if (query.length() < 2) {
+                      input.setError("Введите хотя бы две буквы");
+                      return;
+                    }
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                    dialog.setMessage("Ищем город…");
+                    worker.execute(
+                        () -> {
+                          try {
+                            org.json.JSONArray places =
+                                json("https://geocoding-api.open-meteo.com/v1/search?count=8&language=ru&name="
+                                        + java.net.URLEncoder.encode(query, "UTF-8"))
+                                    .optJSONArray("results");
+                            handler.post(
+                                () -> {
+                                  if (isDestroyed() || !dialog.isShowing()) return;
+                                  dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                                  if (places == null || places.length() == 0) {
+                                    dialog.setMessage(
+                                        "Город не найден. Попробуйте другое название.");
+                                    return;
+                                  }
+                                  String[] labels = new String[places.length()];
+                                  for (int i = 0; i < labels.length; i++) {
+                                    org.json.JSONObject place = places.optJSONObject(i);
+                                    labels[i] =
+                                        place.optString("name")
+                                            + ", "
+                                            + place.optString("admin1")
+                                            + ", "
+                                            + place.optString("country");
+                                  }
+                                  dialog.dismiss();
+                                  new AlertDialog.Builder(this)
+                                      .setTitle("Выберите город")
+                                      .setItems(
+                                          labels,
+                                          (d2, n) -> {
+                                            org.json.JSONObject place = places.optJSONObject(n);
+                                            weatherRequests.invalidate();
+                                            getPreferences(0)
+                                                .edit()
+                                                .putString("weather_city", place.optString("name"))
+                                                .putString(
+                                                    "weather_lat", place.optString("latitude"))
+                                                .putString(
+                                                    "weather_lon", place.optString("longitude"))
+                                                .remove("weather_cache")
+                                                .putLong("weather_time", 0)
+                                                .apply();
+                                            loadWeather();
+                                            ((ScrollView) page.getParent()).smoothScrollTo(0, 0);
+                                          })
+                                      .setNegativeButton("Отмена", null)
+                                      .show();
+                                });
+                          } catch (Exception e) {
+                            handler.post(
+                                () -> {
+                                  if (!isDestroyed() && dialog.isShowing()) {
+                                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                                    dialog.setMessage(
+                                        "Не удалось найти город. Проверьте интернет и повторите"
+                                            + " поиск.");
+                                  }
+                                });
+                          }
+                        });
+                  });
+        });
+    dialog.show();
   }
 
   org.json.JSONObject json(String url) throws Exception {
@@ -723,31 +1006,37 @@ public class MainActivity extends Activity {
     }
   }
 
-  private boolean weatherLoading;
-
   void loadWeather() {
     String city = getPreferences(0).getString("weather_city", "");
-    if (city.isEmpty()
-        || weatherLoading
-        || System.currentTimeMillis() - getPreferences(0).getLong("weather_time", 0) < 1800000)
-      return;
-    weatherLoading = true;
+    if (!weatherRequests.shouldLoad(
+        city, System.currentTimeMillis(), getPreferences(0).getLong("weather_time", 0))) return;
+    final int generation = weatherRequests.begin();
+    final String latitude = getPreferences(0).getString("weather_lat", "");
+    final String longitude = getPreferences(0).getString("weather_lon", "");
+    if (weather != null) weather.setText(city + ": загружаем погоду…");
     worker.execute(
         () -> {
           String result;
           boolean ok = false;
           try {
-            org.json.JSONArray places =
-                json("https://geocoding-api.open-meteo.com/v1/search?count=1&language=ru&name="
-                        + java.net.URLEncoder.encode(city, "UTF-8"))
-                    .optJSONArray("results");
-            if (places == null || places.length() == 0) throw new java.io.IOException();
-            org.json.JSONObject place = places.getJSONObject(0);
+            String lat = latitude;
+            String lon = longitude;
+            if (lat.isEmpty() || lon.isEmpty()) {
+              org.json.JSONArray places =
+                  json("https://geocoding-api.open-meteo.com/v1/search?count=1&language=ru&name="
+                          + java.net.URLEncoder.encode(city, "UTF-8"))
+                      .optJSONArray("results");
+              if (places == null || places.length() == 0)
+                throw new java.io.IOException("Город не найден");
+              org.json.JSONObject place = places.getJSONObject(0);
+              lat = place.getString("latitude");
+              lon = place.getString("longitude");
+            }
             org.json.JSONObject current =
                 json("https://api.open-meteo.com/v1/forecast?latitude="
-                        + place.getDouble("latitude")
+                        + lat
                         + "&longitude="
-                        + place.getDouble("longitude")
+                        + lon
                         + "&current=temperature_2m,weather_code")
                     .getJSONObject("current");
             int code = current.getInt("weather_code");
@@ -762,7 +1051,7 @@ public class MainActivity extends Activity {
                                 ? "дождь"
                                 : code <= 77 ? "снег" : code <= 86 ? "осадки" : "гроза";
             result =
-                place.getString("name")
+                city
                     + ": "
                     + Math.round(current.getDouble("temperature_2m"))
                     + " °C, "
@@ -781,7 +1070,7 @@ public class MainActivity extends Activity {
           final boolean success = ok;
           handler.post(
               () -> {
-                weatherLoading = false;
+                if (!weatherRequests.complete(generation)) return;
                 if (isDestroyed() || !city.equals(getPreferences(0).getString("weather_city", "")))
                   return;
                 if (success)
