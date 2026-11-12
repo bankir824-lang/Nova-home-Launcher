@@ -83,6 +83,7 @@ public class MainActivity extends Activity {
     t.setText(s);
     t.setTextColor(color);
     t.setTextSize(size);
+    t.setFontFeatureSettings("kern");
     t.setGravity(Gravity.CENTER_VERTICAL);
     return t;
   }
@@ -113,6 +114,14 @@ public class MainActivity extends Activity {
     LinearLayout.LayoutParams p = lp(w, h);
     p.rightMargin = dp(right);
     parent.addView(child, p);
+  }
+
+  @Override
+  protected void attachBaseContext(Context base) {
+    android.content.res.Configuration config =
+        new android.content.res.Configuration(base.getResources().getConfiguration());
+    config.fontScale *= base.getSharedPreferences("MainActivity", 0).getFloat("font_scale", 0.8f);
+    super.attachBaseContext(base.createConfigurationContext(config));
   }
 
   @Override
@@ -181,14 +190,14 @@ public class MainActivity extends Activity {
         Drawable d =
             android.graphics.ImageDecoder.decodeDrawable(
                 source, (decoder, info, src) -> decoder.setTargetSize(1920, 1080));
-        d.setColorFilter(0x77000000, PorterDuff.Mode.SRC_ATOP);
+        d.setColorFilter(0xbb000000, PorterDuff.Mode.SRC_ATOP);
         sc.setBackground(d);
       } catch (Exception e) {
         getPreferences(0).edit().remove("wallpaper").apply();
       }
     setContentView(sc);
     page = vertical();
-    page.setPadding(dp(38), dp(20), dp(38), dp(28));
+    page.setPadding(dp(32), dp(16), dp(32), dp(24));
     sc.addView(page);
     header();
     gap(page, 17);
@@ -203,13 +212,18 @@ public class MainActivity extends Activity {
   void header() {
     LinearLayout bar = horizontal();
     page.addView(bar, lp(-1, 48));
-    TextView logo = label("✦  NovaTV", 26, WHITE);
+    TextView logo = label("✦  NovaTV", 22, WHITE);
     logo.setTypeface(null, Typeface.BOLD);
-    marginAdd(bar, logo, 136, -1, 8);
+    marginAdd(bar, logo, 112, -1, 8);
     menu = horizontal();
     bar.addView(menu, new LinearLayout.LayoutParams(0, -1, 1));
     nav("Главная", () -> home());
-    nav("Приложения", () -> allApps());
+    nav(
+        "Приложения",
+        () -> {
+          showHidden = false;
+          allApps();
+        });
     nav("Избранное", () -> favorites());
     nav("Настройки", () -> settings());
     clock = label("", 14, WHITE);
@@ -253,12 +267,12 @@ public class MainActivity extends Activity {
     TextView t = label(s, 14, WHITE);
     t.setGravity(Gravity.CENTER);
     t.setPadding(dp(10), 0, dp(10), 0);
-    t.setBackground(shape(0x553e587b, 14));
+    t.setBackground(shape(0x99172131, 14));
     t.setFocusable(true);
     t.setOnClickListener(v -> r.run());
     t.setOnFocusChangeListener(
         (v, f) -> {
-          t.setBackground(shape(f ? 0xffd9eaff : 0x553e587b, 14));
+          t.setBackground(shape(f ? 0xffd9eaff : 0x99172131, 14));
           t.setTextColor(f ? 0xff10182a : WHITE);
         });
     marginAdd(menu, t, -2, 42, 9);
@@ -290,24 +304,23 @@ public class MainActivity extends Activity {
     fullRows.clear();
     TextView t = label(title, 22, WHITE);
     t.setTypeface(null, Typeface.BOLD);
-    content.addView(t);
-    gap(content, 9);
+    if (!title.isEmpty()) {
+      content.addView(t);
+      gap(content, 9);
+    }
   }
 
   void home() {
     currentScreen = 0;
     showHidden = false;
-    clear(
-        movingPackage == null
-            ? "Главный экран"
-            : "Перемещение: стрелки · OK — сохранить · Назад — отменить");
+    clear(movingPackage == null ? "" : "Перемещение: стрелки · OK — сохранить · Назад — отменить");
     if (getPreferences(0).getBoolean("show_favorites", true)) {
-      content.addView(label("Избранные приложения", 22, WHITE));
-      List<App> fav = getFavorites();
-      if (fav.isEmpty())
-        content.addView(
-            label("Удерживайте OK на карточке, чтобы добавить приложение в избранное", 15, MUTED));
-      else rowApps(fav, true);
+
+      List<App> fav = visibleApps(getFavorites(), false);
+      if (!fav.isEmpty()) {
+        content.addView(label("Избранное", 18, WHITE));
+        rowApps(getFavorites(), true);
+      }
     }
     if (getPreferences(0).getBoolean("show_all", true)) {
       gap(content, 18);
@@ -321,7 +334,7 @@ public class MainActivity extends Activity {
         if (category.equals(getPreferences(0).getString("category_" + app.pkg, ""))) apps.add(app);
       gap(content, 14);
       content.addView(label(category, 22, WHITE));
-      if (apps.isEmpty())
+      if (visibleApps(apps, false).isEmpty())
         content.addView(label("Удерживайте OK на приложении → Категория", 14, MUTED));
       else rowApps(apps, false, "category_order_" + category);
     }
@@ -330,18 +343,23 @@ public class MainActivity extends Activity {
 
   void allApps() {
     currentScreen = 1;
-    clear("Все приложения");
-    rowApps(installed);
+    clear(showHidden ? "Скрытые приложения" : "Все приложения");
+    if (showHidden) {
+      List<App> hidden = visibleApps(installed, true);
+      if (hidden.isEmpty()) content.addView(label("Нет скрытых приложений", 16, MUTED));
+      else rowApps(hidden);
+    } else rowApps(installed);
   }
 
   void favorites() {
     currentScreen = 2;
+    showHidden = false;
     clear("Избранное");
-    List<App> fav = getFavorites();
+    List<App> fav = visibleApps(getFavorites(), false);
     if (fav.isEmpty())
       content.addView(
           label("Удерживайте OK на карточке приложения, чтобы добавить его сюда", 16, MUTED));
-    else rowApps(fav, true);
+    else rowApps(getFavorites(), true);
   }
 
   List<String> readIds(String key) {
@@ -381,17 +399,30 @@ public class MainActivity extends Activity {
   }
 
   void action(LinearLayout parent, String s, Runnable r) {
-    TextView t = label(s, 18, WHITE);
+    TextView t = label(s, 16, WHITE);
     t.setGravity(Gravity.CENTER);
-    t.setBackground(shape(0x663d5376, 12));
+    t.setBackground(shape(0xdd182334, 12));
     t.setFocusable(true);
     t.setOnClickListener(v -> r.run());
     t.setOnFocusChangeListener(
         (v, f) -> {
-          t.setBackground(shape(f ? 0xffd9eaff : 0x663d5376, 12));
+          t.setBackground(shape(f ? 0xffd9eaff : 0xdd182334, 12));
           t.setTextColor(f ? 0xff0b1425 : WHITE);
         });
-    marginAdd(parent, t, Math.max(52, s.length() * 10 + 24), 40, 8);
+    LinearLayout.LayoutParams params = lp(-2, 38);
+    params.rightMargin = dp(8);
+    params.bottomMargin = dp(8);
+    t.setPadding(dp(14), 0, dp(14), 0);
+    parent.addView(t, params);
+  }
+
+  List<App> visibleApps(List<App> apps, boolean hiddenOnly) {
+    List<App> result = new ArrayList<>();
+    List<String> ids = new ArrayList<>();
+    for (App app : apps) ids.add(app.pkg);
+    List<String> selected = AppVisibility.select(ids, readIds("hidden"), hiddenOnly);
+    for (App app : apps) if (selected.contains(app.pkg)) result.add(app);
+    return result;
   }
 
   void rowApps(List<App> list) {
@@ -417,37 +448,37 @@ public class MainActivity extends Activity {
     HorizontalScrollView scroll = new HorizontalScrollView(this);
     scroll.setClipToPadding(false);
     scroll.setHorizontalScrollBarEnabled(false);
-    content.addView(scroll, lp(-1, 150));
+    content.addView(scroll, lp(-1, 104));
     LinearLayout row = horizontal();
     row.setPadding(dp(6), dp(7), dp(6), dp(7));
     scroll.addView(row);
     for (App a : list) {
       if (!showHidden && readIds("hidden").contains(a.pkg)) continue;
-      final int cardWidth = getPreferences(0).getInt("card_size", 176);
+      final int cardWidth = getPreferences(0).getInt("card_size_v2", 116);
       LinearLayout card = vertical();
       card.setGravity(Gravity.CENTER);
-      card.setPadding(dp(10), dp(10), dp(10), dp(10));
-      card.setBackground(shape(0xcc273b59, 16));
+      card.setPadding(dp(8), dp(6), dp(8), dp(6));
+      card.setBackground(shape(0xee172131, 16));
       card.setFocusable(true);
       card.setTag(rowKey + ":" + a.pkg);
       card.setContentDescription(a.label + ". OK — запуск, удержание OK — меню");
       card.setOnFocusChangeListener(
           (v, f) -> {
-            card.animate().scaleX(f ? 1.05f : 1).scaleY(f ? 1.05f : 1).setDuration(140).start();
-            GradientDrawable bg = shape(f ? 0xff415d83 : 0xcc273b59, 16);
+            card.animate().scaleX(f ? 1.04f : 1).scaleY(f ? 1.04f : 1).setDuration(140).start();
+            GradientDrawable bg = shape(f ? 0xff2b405b : 0xee172131, 16);
             if (f) bg.setStroke(dp(2), WHITE);
             card.setBackground(bg);
           });
-      marginAdd(row, card, cardWidth, 128, 14);
+      marginAdd(row, card, cardWidth, 88, 10);
       ImageView icon = new ImageView(this);
       icon.setImageDrawable(a.icon);
       icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-      card.addView(icon, lp(70, 70));
+      card.addView(icon, lp(46, 46));
       TextView name = label((favoriteIds().contains(a.pkg) ? "★ " : "") + a.label, 15, WHITE);
       name.setSingleLine(true);
       name.setEllipsize(android.text.TextUtils.TruncateAt.END);
       name.setGravity(Gravity.CENTER);
-      card.addView(name, lp(cardWidth - 20, 30));
+      card.addView(name, lp(cardWidth - 16, 24));
       card.setOnClickListener(
           v -> {
             if (movingPackage != null) finishMove();
@@ -530,6 +561,14 @@ public class MainActivity extends Activity {
                   toggle(a);
                   break;
                 case 1:
+                  if (showHidden) {
+                    Toast.makeText(
+                            this,
+                            "Сначала покажите приложение, затем переместите его",
+                            Toast.LENGTH_LONG)
+                        .show();
+                    break;
+                  }
                   movingPackage = a.pkg;
                   movingFavorites = fav;
                   movingRowKey = rowKey;
@@ -664,77 +703,125 @@ public class MainActivity extends Activity {
 
   void settings() {
     currentScreen = 3;
-    clear("Настройки NovaTV");
-    LinearLayout custom = horizontal();
-    content.addView(custom);
-    action(custom, "Главный экран", this::appearance);
-    action(custom, "Категории", this::manageCategories);
-    action(custom, "Автозапуск", this::autostartSettings);
-    LinearLayout system = horizontal();
-    content.addView(system);
-    action(
-        system,
-        "Настройки ТВ",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_SETTINGS)));
-    action(
-        system,
-        "Сеть",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)));
-    action(
-        system,
-        "Дата и время",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_DATE_SETTINGS)));
-    LinearLayout tools = horizontal();
-    content.addView(tools);
-    action(
-        tools,
-        "Скрытые приложения",
-        () -> {
-          showHidden = true;
-          allApps();
-        });
-    action(
-        tools,
-        "Обновить погоду",
-        () -> {
-          getPreferences(0).edit().putLong("weather_time", 0).apply();
-          loadWeather();
-        });
-    LinearLayout themes = horizontal();
-    content.addView(themes);
-    action(themes, "Ночная тема", () -> changeNovaTheme(0));
-    action(themes, "Закат", () -> changeNovaTheme(1));
-    action(themes, "Океан", () -> changeNovaTheme(2));
-    gap(content, 16);
-    LinearLayout opts = horizontal();
-    content.addView(opts);
-    action(
-        opts,
-        "Обновить приложения",
-        () -> {
-          refreshApps();
-          home();
-        });
-    action(opts, "Диагностика", this::diagnostics);
-    LinearLayout extra = horizontal();
-    content.addView(extra);
-    action(extra, "Выбрать обои", () -> safeStartForWallpaper());
-    action(
-        extra,
+    showHidden = false;
+    clear("Настройки");
+    settingsGroup("ОФОРМЛЕНИЕ");
+    settingsPair("Главный экран", this::appearance, "Размер шрифта", this::fontSettings);
+    settingsPair(
+        "Тема оформления",
+        () ->
+            new AlertDialog.Builder(this)
+                .setTitle("Тема оформления")
+                .setSingleChoiceItems(
+                    new String[] {"Ночная", "Закат", "Океан"},
+                    theme,
+                    (d, n) -> {
+                      d.dismiss();
+                      changeNovaTheme(n);
+                    })
+                .setNegativeButton("Закрыть", null)
+                .show(),
+        "Выбрать обои",
+        this::safeStartForWallpaper);
+    settingsPair(
         "Сбросить обои",
         () -> {
           getPreferences(0).edit().remove("wallpaper").apply();
           render();
           settings();
+        },
+        "Категории",
+        this::manageCategories);
+    settingsGroup("ПРИЛОЖЕНИЯ");
+    settingsPair(
+        "Скрытые приложения",
+        () -> {
+          showHidden = true;
+          allApps();
+        },
+        "Автозапуск",
+        this::autostartSettings);
+    settingsPair(
+        "Обновить список",
+        () -> {
+          refreshApps();
+          home();
+        },
+        "Диагностика TCL",
+        this::diagnostics);
+    settingsGroup("ПОГОДА И СИСТЕМА");
+    settingsPair(
+        "Город погоды",
+        this::weatherCity,
+        "Обновить погоду",
+        () -> {
+          getPreferences(0).edit().putLong("weather_time", 0).apply();
+          loadWeather();
         });
-    action(extra, "Город погоды", this::weatherCity);
-    gap(content, 18);
-    content.addView(
-        label(
-            "Настройку лаунчера по умолчанию выполним отдельно. Google TV пока остаётся без"
-                + " изменений.",
-            15,
-            MUTED));
+    settingsPair(
+        "Настройки ТВ",
+        () -> safeStart(new Intent(android.provider.Settings.ACTION_SETTINGS)),
+        "Сеть",
+        () -> safeStart(new Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)));
+    settingsPair(
+        "Дата и время",
+        () -> safeStart(new Intent(android.provider.Settings.ACTION_DATE_SETTINGS)),
+        "Ошибка погоды",
+        () ->
+            new AlertDialog.Builder(this)
+                .setTitle("Диагностика погоды")
+                .setMessage(
+                    getPreferences(0).getString("weather_error", "Ошибок нет")
+                        + "\nВремя ТВ: "
+                        + new Date())
+                .setPositiveButton("Закрыть", null)
+                .show());
+  }
+
+  void settingsGroup(String title) {
+    gap(content, 12);
+    content.addView(label(title, 13, MUTED));
+    gap(content, 6);
+  }
+
+  void settingsPair(String left, Runnable a, String right, Runnable b) {
+    LinearLayout row = horizontal();
+    content.addView(row, lp(-1, 48));
+    for (int i = 0; i < 2; i++) {
+      final Runnable callback = i == 0 ? a : b;
+      TextView button = label(i == 0 ? left : right, 17, WHITE);
+      button.setPadding(dp(16), 0, dp(16), 0);
+      button.setBackground(shape(0xee172131, 8));
+      button.setFocusable(true);
+      button.setOnClickListener(v -> callback.run());
+      button.setOnFocusChangeListener(
+          (v, focus) -> {
+            button.setBackground(shape(focus ? 0xffd9eaff : 0xee172131, 8));
+            button.setTextColor(focus ? 0xff101725 : WHITE);
+          });
+      LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(40), 1);
+      params.rightMargin = dp(10);
+      row.addView(button, params);
+    }
+  }
+
+  void fontSettings() {
+    float scale = getPreferences(0).getFloat("font_scale", 0.8f);
+    new AlertDialog.Builder(this)
+        .setTitle("Размер шрифта")
+        .setSingleChoiceItems(
+            new String[] {"Маленький", "Средний", "Большой"},
+            scale < 0.85f ? 0 : scale < 1 ? 1 : 2,
+            (d, n) -> {
+              getPreferences(0)
+                  .edit()
+                  .putFloat("font_scale", new float[] {0.8f, 0.9f, 1f}[n])
+                  .apply();
+              d.dismiss();
+              recreate();
+            })
+        .setNegativeButton("Закрыть", null)
+        .show();
   }
 
   void changeNovaTheme(int value) {
@@ -770,7 +857,7 @@ public class MainActivity extends Activity {
             + (getFilesDir().getUsableSpace() / 1024 / 1024)
             + " МБ\nНайдено приложений: "
             + installed.size()
-            + "\nВерсия NovaTV: 0.4.1";
+            + "\nВерсия NovaTV: 0.5.0";
     new AlertDialog.Builder(this)
         .setTitle("Диагностика TCL")
         .setMessage(s)
@@ -837,13 +924,13 @@ public class MainActivity extends Activity {
                     .setTitle("Размер карточек")
                     .setSingleChoiceItems(
                         new String[] {"Компактные", "Обычные", "Крупные"},
-                        getPreferences(0).getInt("card_size", 176) == 144
+                        getPreferences(0).getInt("card_size_v2", 116) == 96
                             ? 0
-                            : getPreferences(0).getInt("card_size", 176) == 208 ? 2 : 1,
+                            : getPreferences(0).getInt("card_size_v2", 116) == 136 ? 2 : 1,
                         (dialog, index) -> {
                           getPreferences(0)
                               .edit()
-                              .putInt("card_size", new int[] {144, 176, 208}[index])
+                              .putInt("card_size_v2", new int[] {96, 116, 136}[index])
                               .apply();
                           dialog.dismiss();
                           home();
@@ -1040,8 +1127,8 @@ public class MainActivity extends Activity {
     LinearLayout panel = horizontal();
     panel.setPadding(dp(16), dp(8), dp(16), dp(8));
     panel.setBackground(shape(0xbb20334e, 14));
-    page.addView(panel, lp(-1, 64));
-    weather = label("", 17, WHITE);
+    page.addView(panel, lp(-1, 48));
+    weather = label("", 15, WHITE);
     weather.setMaxLines(2);
     panel.addView(weather, new LinearLayout.LayoutParams(0, -1, 1));
     action(panel, "Город", this::weatherCity);
@@ -1152,7 +1239,14 @@ public class MainActivity extends Activity {
     java.net.HttpURLConnection c =
         (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
     c.setConnectTimeout(10000);
-    c.setReadTimeout(10000);
+    c.setReadTimeout(12000);
+    c.setRequestProperty("Accept", "application/json");
+    c.setRequestProperty("User-Agent", "NovaTVLauncher/0.5 AndroidTV");
+    int status = c.getResponseCode();
+    if (status != 200) {
+      c.disconnect();
+      throw new java.io.IOException("HTTP " + status);
+    }
     try (java.io.InputStream in = c.getInputStream();
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
       byte[] bytes = new byte[4096];
@@ -1167,6 +1261,11 @@ public class MainActivity extends Activity {
     }
   }
 
+  String weatherFailure(Exception e) {
+    if (e instanceof org.json.JSONException) return "Некорректный ответ сервиса";
+    return WeatherErrors.describe(e);
+  }
+
   void loadWeather() {
     String city = getPreferences(0).getString("weather_city", "");
     if (!weatherRequests.shouldLoad(
@@ -1179,6 +1278,7 @@ public class MainActivity extends Activity {
         () -> {
           String result;
           boolean ok = false;
+          String weatherError = "";
           try {
             String lat = latitude;
             String lon = longitude;
@@ -1193,47 +1293,86 @@ public class MainActivity extends Activity {
               lat = place.getString("latitude");
               lon = place.getString("longitude");
             }
-            org.json.JSONObject current =
-                json("https://api.open-meteo.com/v1/forecast?latitude="
-                        + lat
-                        + "&longitude="
-                        + lon
-                        + "&current=temperature_2m,weather_code")
-                    .getJSONObject("current");
+            org.json.JSONObject current;
+            String provider = "Open-Meteo";
+            try {
+              current =
+                  json("https://api.open-meteo.com/v1/forecast?latitude="
+                          + lat
+                          + "&longitude="
+                          + lon
+                          + "&current=temperature_2m,weather_code")
+                      .getJSONObject("current");
+            } catch (Exception primary) {
+              try {
+                org.json.JSONObject legacy =
+                    json("https://api.open-meteo.com/v1/forecast?latitude="
+                            + lat
+                            + "&longitude="
+                            + lon
+                            + "&current_weather=true")
+                        .getJSONObject("current_weather");
+                current =
+                    new org.json.JSONObject()
+                        .put("temperature_2m", legacy.getDouble("temperature"))
+                        .put("weather_code", legacy.getInt("weathercode"));
+              } catch (Exception secondary) {
+                try {
+                  org.json.JSONObject backup =
+                      json("https://wttr.in/" + lat + "," + lon + "?format=j1")
+                          .getJSONArray("current_condition")
+                          .getJSONObject(0);
+                  current =
+                      new org.json.JSONObject()
+                          .put("temperature_2m", backup.getDouble("temp_C"))
+                          .put("weather_code", -1);
+                  provider = "wttr.in";
+                } catch (Exception fallback) {
+                  throw new java.io.IOException(
+                      weatherFailure(primary) + "; резерв: " + weatherFailure(fallback), primary);
+                }
+              }
+            }
             int code = current.getInt("weather_code");
             String sky =
-                code == 0
-                    ? "ясно"
-                    : code <= 3
-                        ? "облачно"
-                        : code <= 48
-                            ? "туман"
-                            : code <= 67
-                                ? "дождь"
-                                : code <= 77 ? "снег" : code <= 86 ? "осадки" : "гроза";
+                code < 0
+                    ? ""
+                    : code == 0
+                        ? "ясно"
+                        : code <= 3
+                            ? "облачно"
+                            : code <= 48
+                                ? "туман"
+                                : code <= 67
+                                    ? "дождь"
+                                    : code <= 77 ? "снег" : code <= 86 ? "осадки" : "гроза";
             result =
                 city
                     + ": "
                     + Math.round(current.getDouble("temperature_2m"))
-                    + " °C, "
-                    + sky
-                    + " · Open-Meteo · "
+                    + " °C"
+                    + (sky.isEmpty() ? "" : ", " + sky)
+                    + " · "
+                    + provider
+                    + " · "
                     + new SimpleDateFormat("HH:mm", new Locale("ru")).format(new Date());
             ok = true;
           } catch (Exception e) {
+            weatherError = weatherFailure(e);
             result =
-                getPreferences(0)
-                        .getString(
-                            "weather_cache", "Погода недоступна. Проверьте сеть и название города.")
-                    + " · нет свежих данных";
+                getPreferences(0).getString("weather_cache", city + ": погода недоступна")
+                    + " · "
+                    + weatherError;
           }
           final String text = result;
+          final String error = weatherError;
           final boolean success = ok;
           handler.post(
               () -> {
                 if (!weatherRequests.complete(generation)) return;
                 if (isDestroyed() || !city.equals(getPreferences(0).getString("weather_city", "")))
                   return;
+                getPreferences(0).edit().putString("weather_error", error).apply();
                 if (success)
                   getPreferences(0)
                       .edit()
