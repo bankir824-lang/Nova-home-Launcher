@@ -1,9 +1,0 @@
-<resources>
-    <style name="NovaDialogTheme" parent="android:style/Theme.Material.Dialog.Alert">
-        <item name="android:colorAccent">#78FFF0</item>
-        <item name="android:colorBackgroundFloating">#182640</item>
-        <item name="android:textColorPrimary">#F4FDFF</item>
-        <item name="android:textColorSecondary">#B9CEE4</item>
-        <item name="android:fontFamily">sans-serif</item>
-    </style>
-</resources>
