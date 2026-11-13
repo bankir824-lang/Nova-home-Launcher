@@ -61,6 +61,24 @@ public class TvInterfaceTest {
   }
 
   @Test
+  public void reopeningSettingsReusesPanelAndRestoresFocus() {
+    MainActivity activity = create();
+    activity.settings();
+    TvSettingsPanel panel = (TvSettingsPanel) ShadowDialog.getLatestDialog();
+    View content = panel.findViewById(android.R.id.content);
+    View wallpaper = content.findViewWithTag("root.wallpaper");
+    assertTrue(wallpaper.requestFocus());
+    panel.onBackPressed();
+    assertFalse(panel.isShowing());
+    activity.settings();
+    assertTrue(panel.isShowing());
+    assertSame(content, panel.findViewById(android.R.id.content));
+    assertSame(wallpaper, panel.getCurrentFocus());
+    panel.dismiss();
+    activity.finish();
+  }
+
+  @Test
   public void repeatedAppearanceChangesKeepTheSamePreviewRoot() {
     MainActivity activity = create();
     ViewGroup windowContent = activity.findViewById(android.R.id.content);

@@ -33,6 +33,7 @@ final class TvSettingsPanel extends Dialog {
   private LinearLayout heading;
   private View first;
   private String currentTitle = "";
+  private boolean parked;
 
   boolean isPage(String title) {
     return title.equals(currentTitle);
@@ -50,17 +51,40 @@ final class TvSettingsPanel extends Dialog {
 
   @Override
   public void show() {
-    super.show();
     Window window = getWindow();
+    if (parked) {
+      parked = false;
+      if (accent != host.accent()) drawPage();
+      host.previewSettings(true);
+      super.show();
+      Object key = pages.peek().focusKey;
+      View target = key == null ? first : body.findViewWithTag(key);
+      if (target != null) target.requestFocus();
+      return;
+    }
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
     window.setGravity(Gravity.END);
     window.setLayout((int) (host.getResources().getDisplayMetrics().widthPixels * 0.43f), -1);
-    window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-    WindowManager.LayoutParams attrs = window.getAttributes();
-    attrs.dimAmount = 0.08f;
-    window.setAttributes(attrs);
-    host.previewSettings(true);
+    window.setWindowAnimations(0);
+    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     drawPage();
+    host.previewSettings(true);
+    super.show();
+  }
+
+  boolean canResume() {
+    return parked;
+  }
+
+  @Override
+  public boolean isShowing() {
+    return !parked && super.isShowing();
+  }
+
+  @Override
+  public void dismiss() {
+    parked = false;
+    super.dismiss();
   }
 
   void open(Page page) {
@@ -74,7 +98,12 @@ final class TvSettingsPanel extends Dialog {
     if (pages.size() > 1) {
       pages.pop();
       drawPage();
-    } else dismiss();
+    } else {
+      rememberPage();
+      super.hide();
+      parked = true;
+      host.previewSettings(false);
+    }
   }
 
   private void rememberPage() {
@@ -128,6 +157,7 @@ final class TvSettingsPanel extends Dialog {
     pageScroll = new ScrollView(host);
     pageScroll.setFillViewport(true);
     pageScroll.setVerticalScrollBarEnabled(false);
+    pageScroll.setSmoothScrollingEnabled(false);
     body = host.vertical();
     body.setPadding(host.dp(14), 0, host.dp(14), host.dp(18));
     pageScroll.addView(body);

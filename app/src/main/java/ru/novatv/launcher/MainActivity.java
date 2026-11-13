@@ -385,7 +385,7 @@ public class MainActivity extends Activity {
     if (getPreferences(0).getBoolean("keep_screen_on", false))
       getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-    if (previewOpen) applyPreviewTransform(true, false);
+    if (previewOpen) applyPreviewTransform(true);
   }
 
   private void applyLauncherPadding() {
@@ -1117,7 +1117,8 @@ public class MainActivity extends Activity {
   void showSettings() {
     if (settingsPanel != null && settingsPanel.isShowing()) return;
     if (currentScreen != 0) home();
-    settingsPanel = new TvSettingsPanel(this, accent(), this::rootSettings);
+    if (settingsPanel == null || !settingsPanel.canResume())
+      settingsPanel = new TvSettingsPanel(this, accent(), this::rootSettings);
     settingsPanel.show();
   }
 
@@ -1139,35 +1140,27 @@ public class MainActivity extends Activity {
                   ? focusBeforePreview : getPreferences(0).getString("last_focus", null))
               : null;
       launcherScroll.scrollTo(0, homeScrollBeforePreview);
-      restoreAppFocus();
+      View focused = launcherScroll.findFocus();
+      if (focused != null && returnFocusTag != null && returnFocusTag.equals(focused.getTag())) {
+        returnFocusTag = null;
+      } else {
+        restoreAppFocus();
+      }
     }
-    applyPreviewTransform(open, true);
+    applyPreviewTransform(open);
   }
 
-  private void applyPreviewTransform(boolean open, boolean animate) {
+  private void applyPreviewTransform(boolean open) {
     if (launcherView == null) return;
-    launcherView.animate().cancel();
     float width = getResources().getDisplayMetrics().widthPixels;
     launcherView.setPivotX(width * 0.5f);
     launcherView.setPivotY(getResources().getDisplayMetrics().heightPixels / 2f);
     launcherView.setCameraDistance(width * 4f);
-    float scale = open ? 0.52f : 1f;
-    float shift = open ? -width * 0.215f : 0f;
-    if (!animate) {
-      launcherView.setScaleX(scale);
-      launcherView.setScaleY(scale);
-      launcherView.setRotationY(open ? -5f : 0f);
-      launcherView.setTranslationX(shift);
-      return;
-    }
-    launcherView
-        .animate()
-        .scaleX(scale)
-        .scaleY(scale)
-        .rotationY(open ? -5f : 0f)
-        .translationX(shift)
-        .setDuration(180)
-        .start();
+    // Keep the live preview at its final scale without compositing the full TV scene every frame.
+    launcherView.setScaleX(open ? 0.52f : 1f);
+    launcherView.setScaleY(open ? 0.52f : 1f);
+    launcherView.setRotationY(open ? -5f : 0f);
+    launcherView.setTranslationX(open ? -width * 0.215f : 0f);
   }
 
   void setBool(String key, boolean value) {
