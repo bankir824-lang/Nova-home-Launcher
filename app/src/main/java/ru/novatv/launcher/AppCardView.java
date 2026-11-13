@@ -12,12 +12,20 @@ final class AppCardView extends FrameLayout {
   final LinearLayout contents;
   private final MainActivity host;
   private final int radius;
+  private GradientDrawable focusOutline;
+  private int focusColor;
 
   AppCardView(MainActivity host, int radius, int color) {
     super(host);
     this.host = host;
     this.radius = radius;
     setFocusable(true);
+    setOutlineProvider(null);
+    focusColor = host.accent();
+    focusOutline = host.shape(Color.TRANSPARENT, radius);
+    focusOutline.setStroke(host.dp(2), focusColor);
+    focusOutline.setAlpha(0);
+    setForeground(focusOutline);
     contents = host.vertical();
     contents.setGravity(Gravity.CENTER);
     contents.setBackground(host.shape(color, radius));
@@ -27,11 +35,19 @@ final class AppCardView extends FrameLayout {
 
   void showFocus(boolean focused, boolean zoom, int color) {
     float scale = focused && zoom ? 1.06f : 1f;
-    animate().scaleX(scale).scaleY(scale).setDuration(150).start();
-    setTranslationZ(focused ? host.dp(4) : 0);
-    GradientDrawable outline = host.shape(Color.TRANSPARENT, radius);
-    outline.setStroke(host.dp(2), color);
-    setForeground(focused ? outline : null);
+    setScaleX(scale);
+    setScaleY(scale);
+    // Keep the focused card above its neighbours without drawing a dynamic elevation shadow.
+    setTranslationZ(focused ? 1f : 0f);
+    if (focused && (focusOutline == null || focusColor != color)) {
+      focusColor = color;
+      focusOutline = host.shape(Color.TRANSPARENT, radius);
+      focusOutline.setStroke(host.dp(2), color);
+    }
+    if (focusOutline != null) {
+      focusOutline.setAlpha(focused ? 255 : 0);
+      if (getForeground() != focusOutline) setForeground(focusOutline);
+    }
   }
 
   void addArtwork(Drawable artwork, int height, boolean banner, boolean mobile) {

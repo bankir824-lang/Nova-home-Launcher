@@ -3,15 +3,19 @@ package ru.novatv.launcher;
 import android.app.Dialog;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
 import android.view.*;
 import android.widget.*;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
-/** A remote-friendly settings stack. The launcher behind the dialog remains a live preview. */
+/** A remote-friendly settings stack over the launcher home screen. */
 final class TvSettingsPanel extends Dialog {
+  static final float WIDTH_FRACTION = 1f / 3f;
+  private static final int BOTTOM_MARGIN_DP = 16;
+
   interface Page {
     void build(TvSettingsPanel panel);
   }
@@ -21,6 +25,7 @@ final class TvSettingsPanel extends Dialog {
     final Page page;
     Object focusKey;
     int scrollY;
+    int focusIndex;
 
     PageState(Page page) {
       this.page = page;
@@ -30,8 +35,14 @@ final class TvSettingsPanel extends Dialog {
   private final ArrayDeque<PageState> pages = new ArrayDeque<>();
   private ScrollView pageScroll;
   private LinearLayout body;
+  private LinearLayout heading;
   private View first;
   private String currentTitle = "";
+  private boolean parked;
+  private final ArrayList<View> reorderableRows = new ArrayList<>();
+  private View movingRow;
+  private int originalRowIndex;
+  private Consumer<List<String>> saveOrder;
 
   boolean isPage(String title) {
     return title.equals(currentTitle);
@@ -44,22 +55,62 @@ final class TvSettingsPanel extends Dialog {
     this.host = host;
     this.accent = accent;
     pages.push(new PageState(root));
-    setOnDismissListener(d -> host.previewSettings(false));
+    setOnDismissListener(d -> host.settingsVisibilityChanged(false));
   }
 
   @Override
   public void show() {
-    super.show();
     Window window = getWindow();
+    int keepScreenOn = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+    window.setFlags(host.getWindow().getAttributes().flags & keepScreenOn, keepScreenOn);
+    updateWindowBounds();
+    if (parked) {
+      parked = false;
+      if (accent != host.accent()) drawPage();
+      host.settingsVisibilityChanged(true);
+      super.show();
+      Object key = pages.peek().focusKey;
+      View target = key == null ? first : body.findViewWithTag(key);
+      if (target != null) target.requestFocus();
+      return;
+    }
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-    window.setGravity(Gravity.END);
-    window.setLayout((int) (host.getResources().getDisplayMetrics().widthPixels * 0.43f), -1);
-    window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-    WindowManager.LayoutParams attrs = window.getAttributes();
-    attrs.dimAmount = 0.08f;
-    window.setAttributes(attrs);
-    host.previewSettings(true);
+    window.setWindowAnimations(R.style.NovaSettingsWindowAnimation);
+    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     drawPage();
+    host.settingsVisibilityChanged(true);
+    super.show();
+    updateWindowBounds();
+  }
+
+  void updateWindowBounds() {
+    View decor = host.getWindow().getDecorView();
+    android.util.DisplayMetrics metrics = host.getResources().getDisplayMetrics();
+    int width = decor.getWidth() > 0 ? decor.getWidth() : metrics.widthPixels;
+    int height = decor.getHeight() > 0 ? decor.getHeight() : metrics.heightPixels;
+    Window window = getWindow();
+    WindowManager.LayoutParams bounds = window.getAttributes();
+    bounds.gravity = Gravity.TOP | Gravity.END;
+    bounds.y = host.settingsPanelTop();
+    bounds.width = Math.round(width * WIDTH_FRACTION);
+    bounds.height = Math.max(1, height - bounds.y - host.dp(BOTTOM_MARGIN_DP));
+    window.setAttributes(bounds);
+  }
+
+  boolean canResume() {
+    return parked;
+  }
+
+  @Override
+  public boolean isShowing() {
+    return !parked && super.isShowing();
+  }
+
+  @Override
+  public void dismiss() {
+    finishReordering(false);
+    parked = false;
+    super.dismiss();
   }
 
   void open(Page page) {
@@ -69,11 +120,43 @@ final class TvSettingsPanel extends Dialog {
   }
 
   @Override
+  public boolean dispatchKeyEvent(KeyEvent event) {
+    if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
+      if (isShowing() && event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) park();
+      return true;
+    }
+    int key = event.getKeyCode();
+    if (movingRow != null && (key == KeyEvent.KEYCODE_DPAD_UP
+        || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_LEFT
+        || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+      if (event.getAction() == KeyEvent.ACTION_DOWN) {
+        int index = reorderableRows.indexOf(movingRow);
+        if (key == KeyEvent.KEYCODE_DPAD_UP) moveRowTo(index - 1);
+        if (key == KeyEvent.KEYCODE_DPAD_DOWN) moveRowTo(index + 1);
+      }
+      return true;
+    }
+    return super.dispatchKeyEvent(event);
+  }
+
+  @Override
   public void onBackPressed() {
-    if (pages.size() > 1) {
+    if (movingRow != null) {
+      finishReordering(false);
+    } else if (pages.size() > 1) {
       pages.pop();
       drawPage();
-    } else dismiss();
+    } else {
+      park();
+    }
+  }
+
+  private void park() {
+    finishReordering(false);
+    rememberPage();
+    parked = true;
+    super.hide();
+    host.settingsVisibilityChanged(false);
   }
 
   private void rememberPage() {
@@ -81,48 +164,78 @@ final class TvSettingsPanel extends Dialog {
     PageState state = pages.peek();
     View focused = pageScroll.findFocus();
     state.focusKey = focused == null ? null : focused.getTag();
+    if (focused != null) {
+      java.util.ArrayList<View> targets = body.getFocusables(View.FOCUS_FORWARD);
+      state.focusIndex = Math.max(0, targets.indexOf(focused));
+    }
     state.scrollY = pageScroll.getScrollY();
   }
 
   private void drawPage() {
+    finishReordering(false);
+    reorderableRows.clear();
+    saveOrder = null;
     accent = host.accent();
-    ScrollView scroll = new ScrollView(host);
-    pageScroll = scroll;
-    scroll.setFillViewport(true);
-    scroll.setVerticalScrollBarEnabled(false);
-    GradientDrawable bg =
-        new GradientDrawable(
-            GradientDrawable.Orientation.TL_BR, new int[] {0xfa20324c, 0xfa101a30});
-    bg.setCornerRadius(host.dp(22));
-    scroll.setBackground(bg);
-    body = host.vertical();
-    body.setPadding(host.dp(18), host.dp(20), host.dp(18), host.dp(24));
-    scroll.addView(body);
-    setContentView(scroll);
+    if (pageScroll == null) createPanel();
+    heading.removeAllViews();
+    body.removeAllViews();
+    currentTitle = "";
+    pageScroll.scrollTo(0, 0);
     first = null;
     PageState state = pages.peek();
     state.page.build(this);
-    View target = state.focusKey == null ? null : scroll.findViewWithTag(state.focusKey);
-    if (target == null || !target.isFocusable() || !target.isEnabled()) target = first;
-    if (target != null) target.requestFocus();
-    scroll.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-      @Override
-      public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
-        v.removeOnLayoutChangeListener(this);
-        if (pageScroll == scroll) scroll.scrollTo(0, state.scrollY);
-      }
-    });
+    View target = state.focusKey == null ? null : body.findViewWithTag(state.focusKey);
+    boolean restoreScroll = target != null && target.isFocusable() && target.isEnabled();
+    if (!restoreScroll) {
+      java.util.ArrayList<View> targets = body.getFocusables(View.FOCUS_FORWARD);
+      target = targets.isEmpty() ? first : targets.get(Math.min(state.focusIndex, targets.size() - 1));
+    }
+    if (target == null) return;
+    target.requestFocus();
+    if (restoreScroll) {
+      final View focused = target;
+      body.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+        @Override
+        public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+          v.removeOnLayoutChangeListener(this);
+          if (pages.peek() == state && focused.isFocused()) pageScroll.scrollTo(0, state.scrollY);
+        }
+      });
+    }
+  }
+
+  private void createPanel() {
+    LinearLayout panel = host.vertical();
+    panel.setBackground(NovaUi.surface(host));
+    heading = host.vertical();
+    heading.setPadding(host.dp(20), host.dp(20), host.dp(20), host.dp(10));
+    panel.addView(heading, host.lp(-1, -2));
+    pageScroll = new ScrollView(host);
+    pageScroll.setFillViewport(true);
+    pageScroll.setVerticalScrollBarEnabled(false);
+    pageScroll.setSmoothScrollingEnabled(false);
+    body = host.vertical();
+    body.setPadding(host.dp(14), 0, host.dp(14), host.dp(18));
+    pageScroll.addView(body);
+    panel.addView(pageScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    setContentView(panel);
   }
 
   void title(String icon, String title, String subtitle) {
     currentTitle = title;
-    TextView heading = host.label(title, 24, 0xfff4fdff);
-    heading.setTypeface(null, android.graphics.Typeface.BOLD);
-    body.addView(heading);
+    if (pages.size() > 1) heading.addView(host.label("Настройки", 13, accent));
+    LinearLayout titleRow = host.horizontal();
+    titleRow.setGravity(Gravity.CENTER_VERTICAL);
+    titleRow.addView(badge(icon), host.lp(32, 32));
+    TextView caption = host.label(title, 24, NovaUi.TEXT);
+    caption.setTypeface(null, android.graphics.Typeface.BOLD);
+    caption.setPadding(host.dp(8), 0, 0, 0);
+    titleRow.addView(caption);
+    heading.addView(titleRow);
     if (!subtitle.isEmpty()) {
-      TextView text = host.label(subtitle, 13, 0xffbdc6dc);
-      text.setPadding(0, host.dp(8), 0, host.dp(16));
-      body.addView(text);
+      TextView text = host.label(subtitle, 13, NovaUi.SECONDARY);
+      text.setPadding(0, host.dp(6), 0, 0);
+      heading.addView(text);
     }
     host.gap(body, 12);
   }
@@ -133,21 +246,43 @@ final class TvSettingsPanel extends Dialog {
     host.gap(body, 6);
   }
 
+  void countdown(long deadline) {
+    TextView remaining = new TextView(host) {
+      private final Runnable update = new Runnable() {
+        @Override public void run() {
+          long millis = Math.max(0, deadline - android.os.SystemClock.elapsedRealtime());
+          long seconds = (millis + 999) / 1000;
+          setText(String.format(java.util.Locale.ROOT, "Осталось %d:%02d",
+              seconds / 60, seconds % 60));
+          if (seconds > 0 && getWindowVisibility() == VISIBLE) postDelayed(this, 1000);
+        }
+      };
+      @Override protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        removeCallbacks(update);
+        if (visibility == VISIBLE) update.run();
+      }
+      @Override protected void onDetachedFromWindow() {
+        removeCallbacks(update);
+        super.onDetachedFromWindow();
+      }
+    };
+    remaining.setTextSize(15);
+    remaining.setTextColor(NovaUi.TEXT);
+    body.addView(remaining);
+  }
+
   private LinearLayout row(String icon, String title, String subtitle) {
     LinearLayout row = host.horizontal();
     row.setContentDescription(title);
     row.setTag("setting:" + title);
     row.setPadding(host.dp(12), host.dp(9), host.dp(12), host.dp(9));
     row.setMinimumHeight(host.dp(52));
+    row.setGravity(Gravity.CENTER_VERTICAL);
     row.setFocusable(true);
     row.setFocusableInTouchMode(true);
-    row.setBackground(host.shape(0x00212a40, 26));
-    ImageView badge = new ImageView(host);
-    badge.setImageResource(iconFor(icon));
-    badge.setColorFilter(accent);
-    badge.setPadding(host.dp(7), host.dp(7), host.dp(7), host.dp(7));
-    badge.setBackground(host.shape((accent & 0x00ffffff) | 0x22000000, 18));
-    row.addView(badge, host.lp(32, 36));
+    row.setBackground(NovaUi.interaction(host, accent));
+    row.addView(badge(icon), host.lp(32, 32));
     LinearLayout labels = host.vertical();
     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -2, 1);
     params.leftMargin = host.dp(10);
@@ -158,12 +293,6 @@ final class TvSettingsPanel extends Dialog {
       TextView hint = host.label(subtitle, 12, 0xffb9c2d7);
       labels.addView(hint);
     }
-    row.setOnFocusChangeListener(
-        (v, focus) -> {
-          GradientDrawable background = host.shape(focus ? 0xff2a4462 : 0x00212a40, 16);
-          if (focus) background.setStroke(host.dp(2), accent);
-          row.setBackground(background);
-        });
     LinearLayout.LayoutParams rp = host.lp(-1, -2);
     rp.bottomMargin = host.dp(4);
     body.addView(row, rp);
@@ -171,16 +300,67 @@ final class TvSettingsPanel extends Dialog {
     return row;
   }
 
+  private ImageView badge(String icon) {
+    ImageView badge = new ImageView(host);
+    badge.setImageResource(iconFor(icon));
+    badge.setColorFilter(accent);
+    badge.setPadding(host.dp(6), host.dp(6), host.dp(6), host.dp(6));
+    badge.setBackground(host.shape((accent & 0x00ffffff) | 0x22000000, 9));
+    return badge;
+  }
+
   private int iconFor(String icon) {
     switch (icon) {
       case "♧": return R.drawable.nova_bell;
-      case "◷":
-      case "☾": return R.drawable.nova_clock;
+      case "◷": return R.drawable.nova_clock;
+      case "☾": return R.drawable.nova_ui_moon;
+      case "display": return R.drawable.nova_ui_tv;
+      case "screensaver": return R.drawable.nova_ui_screensaver;
+      case "sleep_timer": return R.drawable.nova_ui_sleep_timer;
       case "☁": return R.drawable.nova_weather;
       case "▦":
-      case "▣": return R.drawable.nova_apps;
+      case "☷": return R.drawable.nova_apps;
+      case "▣":
+      case "▭": return R.drawable.nova_ui_card;
       case "◉": return R.drawable.nova_wifi;
-      default: return R.drawable.nova_menu;
+      case "⚙": return R.drawable.nova_ui_settings;
+      case "⌂": return R.drawable.nova_ui_home;
+      case "≡": return R.drawable.nova_ui_rows;
+      case "━": return R.drawable.nova_ui_panel;
+      case "▧": return R.drawable.nova_ui_photo;
+      case "◐": return R.drawable.nova_ui_palette;
+      case "◯": return R.drawable.nova_ui_drop;
+      case "▤": return R.drawable.nova_ui_tv;
+      case "◎": return R.drawable.nova_ui_pulse;
+      case "▯": return R.drawable.nova_ui_phone;
+      case "eye": return R.drawable.nova_ui_eye;
+      case "eye_off": return R.drawable.nova_ui_eye_off;
+      case "folder": return R.drawable.nova_ui_folder;
+      case "layers": return R.drawable.nova_ui_layers;
+      case "⇥": return R.drawable.nova_ui_input;
+      case "⌁": return R.drawable.nova_ui_remote;
+      case "shield": return R.drawable.nova_ui_shield;
+      case "♿": return R.drawable.nova_ui_access;
+      case "↺":
+      case "↻": return R.drawable.nova_ui_reset;
+      case "▷": return R.drawable.nova_ui_play;
+      case "calendar": return R.drawable.nova_ui_calendar;
+      case "search": return R.drawable.nova_ui_search;
+      case "ruler": return R.drawable.nova_ui_ruler;
+      case "T": return R.drawable.nova_ui_type;
+      case "☀": return R.drawable.nova_ui_sun;
+      case "!": return R.drawable.nova_ui_info;
+      case "⌖": return R.drawable.nova_ui_pin;
+      case "☆":
+      case "✦": return R.drawable.nova_ui_star;
+      case "+": return R.drawable.nova_ui_plus;
+      case "↔": return R.drawable.nova_ui_horizontal;
+      case "↕": return R.drawable.nova_ui_vertical;
+      case "←": return R.drawable.nova_ui_left;
+      case "→": return R.drawable.nova_ui_right;
+      case "↑": return R.drawable.nova_ui_up;
+      case "⏻": return R.drawable.nova_ui_power;
+      default: return R.drawable.nova_ui_more;
     }
   }
 
@@ -189,11 +369,77 @@ final class TvSettingsPanel extends Dialog {
   }
 
   void action(String key, String icon, String title, String subtitle, Runnable action) {
+    addAction(key, icon, title, subtitle, action, false);
+  }
+
+  void reorderableAction(String key, String icon, String title, String subtitle,
+      Runnable action, Consumer<List<String>> save) {
+    LinearLayout row = addAction(key, icon, title, subtitle, () -> {
+      if (movingRow != null) finishReordering(true);
+      else action.run();
+    }, true);
+    reorderableRows.add(row);
+    saveOrder = save;
+    row.setOnLongClickListener(v -> {
+      if (movingRow == null) {
+        movingRow = row;
+        originalRowIndex = reorderableRows.indexOf(row);
+        row.setBackground(NovaUi.interaction(host, 0xff8de7d3));
+      }
+      return true;
+    });
+    RemoteOkHandler.bind(row);
+  }
+
+  private LinearLayout addAction(String key, String icon, String title, String subtitle,
+      Runnable action, boolean reorderable) {
     LinearLayout row = row(icon, title, subtitle);
     row.setTag(key);
-    TextView arrow = host.label("›", 24, accent);
-    row.addView(arrow);
+    if (reorderable) {
+      ImageView handle = new ImageView(host);
+      handle.setImageResource(R.drawable.nova_ui_reorder);
+      handle.setColorFilter(accent);
+      row.addView(handle, host.lp(22, 22));
+      row.setContentDescription(title + ". Удерживайте OK для перемещения");
+    }
+    ImageView arrow = new ImageView(host);
+    arrow.setImageResource(R.drawable.nova_ui_chevron);
+    arrow.setColorFilter(accent);
+    row.addView(arrow, host.lp(20, 20));
     row.setOnClickListener(v -> action.run());
+    return row;
+  }
+
+  private void moveRowTo(int target) {
+    if (target < 0 || target >= reorderableRows.size()) return;
+    int from = reorderableRows.indexOf(movingRow);
+    if (target == from) return;
+    int bodyIndex = body.indexOfChild(reorderableRows.get(target));
+    // Reattach the focused row at its new index and keep focus on it.
+    body.removeView(movingRow);
+    body.addView(movingRow, bodyIndex);
+    reorderableRows.remove(from);
+    reorderableRows.add(target, movingRow);
+    movingRow.requestFocus();
+    View moved = movingRow;
+    moved.post(() -> {
+      if (moved == movingRow && moved.isFocused()) {
+        moved.requestRectangleOnScreen(new android.graphics.Rect(0, 0, moved.getWidth(),
+            moved.getHeight()), true);
+      }
+    });
+  }
+
+  private void finishReordering(boolean save) {
+    if (movingRow == null) return;
+    if (!save) moveRowTo(originalRowIndex);
+    movingRow.setBackground(NovaUi.interaction(host, accent));
+    movingRow = null;
+    if (save) {
+      ArrayList<String> order = new ArrayList<>();
+      for (View row : reorderableRows) order.add((String) row.getTag());
+      saveOrder.accept(order);
+    }
   }
 
   void unavailable(String icon, String title, String reason) {
@@ -209,12 +455,14 @@ final class TvSettingsPanel extends Dialog {
   }
 
   void app(
+      String key,
       String title,
       String subtitle,
       android.graphics.drawable.Drawable icon,
       Runnable click,
       Runnable longClick) {
     LinearLayout row = row("", title, subtitle);
+    row.setTag(key);
     replaceBadge(row, icon);
     row.setOnClickListener(v -> click.run());
     row.setOnLongClickListener(
@@ -246,7 +494,13 @@ final class TvSettingsPanel extends Dialog {
 
   void toggle(
       String icon, String title, String subtitle, boolean value, Consumer<Boolean> changed) {
+    toggle("setting:" + title, icon, title, subtitle, value, changed);
+  }
+
+  void toggle(String key, String icon, String title, String subtitle, boolean value,
+      Consumer<Boolean> changed) {
     LinearLayout row = row(icon, title, subtitle);
+    row.setTag(key);
     Switch toggle = new Switch(host);
     toggle.setChecked(value);
     int[][] states = {new int[] {android.R.attr.state_checked}, new int[] {}};
@@ -269,8 +523,13 @@ final class TvSettingsPanel extends Dialog {
       String icon, String title, int min, int max, int value, String suffix, IntConsumer changed) {
     LinearLayout container = host.vertical();
     container.setPadding(host.dp(12), host.dp(8), host.dp(12), host.dp(8));
-    TextView text = host.label(icon + "  " + title + " · " + value + suffix, 15, 0xffedf2ff);
-    container.addView(text);
+    LinearLayout labelRow = host.horizontal();
+    labelRow.setGravity(Gravity.CENTER_VERTICAL);
+    labelRow.addView(badge(icon), host.lp(28, 28));
+    TextView text = host.label(title + " · " + value + suffix, 15, NovaUi.TEXT);
+    text.setPadding(host.dp(8), 0, 0, 0);
+    labelRow.addView(text);
+    container.addView(labelRow);
     SeekBar seek = new SeekBar(host);
     seek.setTag("slider:" + title);
     seek.setFocusable(true);
@@ -280,8 +539,9 @@ final class TvSettingsPanel extends Dialog {
     seek.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
     seek.setThumbTintList(android.content.res.ColorStateList.valueOf(accent));
     container.addView(seek, host.lp(-1, 34));
-    seek.setOnFocusChangeListener(
-        (v, focus) -> container.setBackground(host.shape(focus ? 0x667e91b6 : 0x00212a40, 22)));
+    container.setAddStatesFromChildren(true);
+    container.setBackground(NovaUi.interaction(host, accent));
+    seek.setContentDescription(title);
     seek.setOnKeyListener(
         (v, key, event) -> {
           if (key != KeyEvent.KEYCODE_DPAD_LEFT && key != KeyEvent.KEYCODE_DPAD_RIGHT) return false;
@@ -298,7 +558,7 @@ final class TvSettingsPanel extends Dialog {
         new SeekBar.OnSeekBarChangeListener() {
           public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
             int actual = progress + min;
-            text.setText(icon + "  " + title + " · " + actual + suffix);
+            text.setText(title + " · " + actual + suffix);
             changed.accept(actual);
           }
 

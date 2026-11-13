@@ -6,4 +6,19 @@
         <item name="android:textColorSecondary">#B9CEE4</item>
         <item name="android:fontFamily">sans-serif</item>
     </style>
+    <style name="NovaDialogPink" parent="NovaDialogTheme">
+        <item name="android:colorAccent">#FF94B2</item>
+    </style>
+    <style name="NovaDialogBlue" parent="NovaDialogTheme">
+        <item name="android:colorAccent">#9ECAFF</item>
+    </style>
+    <style name="NovaDialogWhite" parent="NovaDialogTheme">
+        <item name="android:colorAccent">#F5F7FF</item>
+    </style>
+    <style name="NovaDialogMint" parent="NovaDialogTheme">
+        <item name="android:colorAccent">#8DE7D3</item>
+    </style>
+    <style name="NovaDialogDark" parent="NovaDialogTheme">
+        <item name="android:colorAccent">#222C40</item>
+    </style>
 </resources>

@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
@@ -17,22 +16,15 @@ import org.json.JSONObject;
 final class WeatherRepository {
   private final String userAgent;
   private final SharedPreferences metCache;
-  private static final long MET_INTERVAL = 3L * 60 * 60 * 1000;
   private static final Object MET_LOCK = new Object();
 
   static final class Forecast {
     final double temperature;
-    final int weatherCode;
-    final String provider, diagnostics;
-    final long fetchedAt;
+    final String diagnostics;
 
-    Forecast(double temperature, int weatherCode, String provider, String diagnostics,
-        long fetchedAt) {
+    Forecast(double temperature, String diagnostics) {
       this.temperature = temperature;
-      this.weatherCode = weatherCode;
-      this.provider = provider;
       this.diagnostics = diagnostics;
-      this.fetchedAt = fetchedAt;
     }
   }
 
@@ -44,27 +36,14 @@ final class WeatherRepository {
   Forecast forecast(String latitude, String longitude) throws IOException {
     double lat = coordinate(latitude, 90);
     double lon = coordinate(longitude, 180);
-    String primary = "https://api.open-meteo.com/v1/forecast?latitude=" + lat
-        + "&longitude=" + lon + "&current=temperature_2m,weather_code";
     String point = "lat=" + metCoordinate(lat) + "&lon=" + metCoordinate(lon);
-    String backup = "https://api.met.no/weatherapi/locationforecast/2.0/compact?" + point;
+    String address = "https://api.met.no/weatherapi/locationforecast/2.0/compact?" + point;
     long start = SystemClock.elapsedRealtime();
-    String primaryError;
     try {
-      JSONObject data = json(primary).getJSONObject("current");
-      return new Forecast(data.getDouble("temperature_2m"), data.getInt("weather_code"),
-          "Open-Meteo", diagnostic(primary, start, "HTTP 200"), System.currentTimeMillis());
+      return metForecast(address, point, start);
     } catch (IOException | JSONException failure) {
       if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException();
-      primaryError = diagnostic(primary, start, describe(failure));
-    }
-    start = SystemClock.elapsedRealtime();
-    try {
-      Forecast met = metForecast(backup, point, start);
-      return new Forecast(met.temperature, met.weatherCode, met.provider,
-          primaryError + "\n" + met.diagnostics, met.fetchedAt);
-    } catch (IOException | JSONException failure) {
-      throw new IOException(primaryError + "\n" + diagnostic(backup, start, describe(failure)), failure);
+      throw new IOException(diagnostic(address, start, describe(failure)), failure);
     }
   }
 
@@ -78,11 +57,10 @@ final class WeatherRepository {
     synchronized (MET_LOCK) {
       long now = System.currentTimeMillis();
       long saved = metCache.getLong(point + ".at", 0);
-      long expiry = metCache.getLong(point + ".until", 0);
-      if (now >= saved && now < expiry) {
+      long expiry = metCache.getLong(point + ".expires", 0);
+      if (saved > 0 && now >= saved && now < expiry) {
         double temperature = Double.longBitsToDouble(metCache.getLong(point + ".temp", 0));
-        return new Forecast(temperature, -1, "MET Norway",
-            diagnostic(address, start, "кеш прогноза"), saved);
+        return new Forecast(temperature, diagnostic(address, start, "кеш прогноза"));
       }
       long retryAfter = metCache.getLong(point + ".retry", 0);
       if (now < retryAfter && retryAfter - now <= 60_000L)
@@ -92,11 +70,11 @@ final class WeatherRepository {
       double temperature = metTemperature(response.json);
       metCache.edit()
           .putLong(point + ".at", now)
-          .putLong(point + ".until", Math.max(now + MET_INTERVAL, response.expiresAt))
+          .putLong(point + ".expires", response.expiresAt)
           .putLong(point + ".temp", Double.doubleToLongBits(temperature))
           .remove(point + ".retry")
           .apply();
-      return new Forecast(temperature, -1, "MET Norway", diagnostic(address, start, "HTTP 200"), now);
+      return new Forecast(temperature, diagnostic(address, start, "HTTP 200"));
     }
   }
 
@@ -108,7 +86,7 @@ final class WeatherRepository {
     return value;
   }
 
-  private static double coordinate(String text, int limit) throws IOException {
+  static double coordinate(String text, int limit) throws IOException {
     try {
       double value = Double.parseDouble(text);
       if (Double.isFinite(value) && Math.abs(value) <= limit) return value;
@@ -126,16 +104,6 @@ final class WeatherRepository {
   private static String diagnostic(String url, long start, String result) throws IOException {
     return new URL(url).getHost() + " · " + result + " · "
         + (SystemClock.elapsedRealtime() - start) + " мс";
-  }
-
-  JSONObject json(String address) throws IOException, JSONException {
-    URL url = new URL(address);
-    if (!"https".equals(url.getProtocol())) throw new IOException("Требуется HTTPS");
-    try {
-      return request(url).json;
-    } catch (SocketTimeoutException failure) {
-      return request(url).json;
-    }
   }
 
   private static final class Response {
