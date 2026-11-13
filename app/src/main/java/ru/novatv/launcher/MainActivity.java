@@ -1037,16 +1037,19 @@ public class MainActivity extends Activity {
       refreshApps();
       renderMoveScreen();
       restoreAppFocus();
-    } else settings();
+    } else if (currentScreen != 0) {
+      home();
+      restoreAppFocus();
+    }
   }
 
   @Override
-  public boolean onKeyDown(int key, KeyEvent event) {
-    if (key == KeyEvent.KEYCODE_MENU) {
-      if (event.getRepeatCount() == 0) settings();
+  public boolean dispatchKeyEvent(KeyEvent event) {
+    if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
+      if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) settings();
       return true;
     }
-    return super.onKeyDown(key, event);
+    return super.dispatchKeyEvent(event);
   }
 
   void safeStart(Intent i) {
@@ -1157,10 +1160,11 @@ public class MainActivity extends Activity {
     launcherView.setPivotY(getResources().getDisplayMetrics().heightPixels / 2f);
     launcherView.setCameraDistance(width * 4f);
     // Keep the live preview at its final scale without compositing the full TV scene every frame.
-    launcherView.setScaleX(open ? 0.52f : 1f);
-    launcherView.setScaleY(open ? 0.52f : 1f);
+    float previewScale = 1f - TvSettingsPanel.WIDTH_FRACTION - 0.05f;
+    launcherView.setScaleX(open ? previewScale : 1f);
+    launcherView.setScaleY(open ? previewScale : 1f);
     launcherView.setRotationY(open ? -5f : 0f);
-    launcherView.setTranslationX(open ? -width * 0.215f : 0f);
+    launcherView.setTranslationX(open ? -width * TvSettingsPanel.WIDTH_FRACTION / 2f : 0f);
   }
 
   void setBool(String key, boolean value) {

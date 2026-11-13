@@ -61,6 +61,22 @@ public class TvInterfaceTest {
   }
 
   @Test
+  public void remoteMenuOpensSettingsAndBackOnlyClosesIt() {
+    MainActivity activity = create();
+    activity.onBackPressed();
+    assertNull(ShadowDialog.getLatestDialog());
+    activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU));
+    assertNull(ShadowDialog.getLatestDialog());
+    activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MENU));
+    Dialog panel = ShadowDialog.getLatestDialog();
+    assertTrue(panel.isShowing());
+    panel.onBackPressed();
+    activity.onBackPressed();
+    assertFalse(panel.isShowing());
+    activity.finish();
+  }
+
+  @Test
   public void reopeningSettingsReusesPanelAndRestoresFocus() {
     MainActivity activity = create();
     activity.settings();
