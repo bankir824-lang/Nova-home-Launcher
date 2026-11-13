@@ -6,12 +6,15 @@ import android.graphics.drawable.ColorDrawable;
 import android.view.*;
 import android.widget.*;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
-/** A remote-friendly settings stack. The launcher behind the dialog remains a live preview. */
+/** A remote-friendly settings stack over the launcher home screen. */
 final class TvSettingsPanel extends Dialog {
   static final float WIDTH_FRACTION = 1f / 3f;
+  private static final int BOTTOM_MARGIN_DP = 16;
 
   interface Page {
     void build(TvSettingsPanel panel);
@@ -36,6 +39,10 @@ final class TvSettingsPanel extends Dialog {
   private View first;
   private String currentTitle = "";
   private boolean parked;
+  private final ArrayList<View> reorderableRows = new ArrayList<>();
+  private View movingRow;
+  private int originalRowIndex;
+  private Consumer<List<String>> saveOrder;
 
   boolean isPage(String title) {
     return title.equals(currentTitle);
@@ -48,20 +55,19 @@ final class TvSettingsPanel extends Dialog {
     this.host = host;
     this.accent = accent;
     pages.push(new PageState(root));
-    setOnDismissListener(d -> host.previewSettings(false));
+    setOnDismissListener(d -> host.settingsVisibilityChanged(false));
   }
 
   @Override
   public void show() {
     Window window = getWindow();
-    int width = Math.round(host.getWindow().getDecorView().getWidth() * WIDTH_FRACTION);
-    if (width == 0)
-      width = Math.round(host.getResources().getDisplayMetrics().widthPixels * WIDTH_FRACTION);
-    window.setLayout(width, ViewGroup.LayoutParams.MATCH_PARENT);
+    int keepScreenOn = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+    window.setFlags(host.getWindow().getAttributes().flags & keepScreenOn, keepScreenOn);
+    updateWindowBounds();
     if (parked) {
       parked = false;
       if (accent != host.accent()) drawPage();
-      host.previewSettings(true);
+      host.settingsVisibilityChanged(true);
       super.show();
       Object key = pages.peek().focusKey;
       View target = key == null ? first : body.findViewWithTag(key);
@@ -69,13 +75,26 @@ final class TvSettingsPanel extends Dialog {
       return;
     }
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-    window.setGravity(Gravity.END);
     window.setWindowAnimations(R.style.NovaSettingsWindowAnimation);
     window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     drawPage();
-    host.previewSettings(true);
+    host.settingsVisibilityChanged(true);
     super.show();
-    window.setLayout(width, ViewGroup.LayoutParams.MATCH_PARENT);
+    updateWindowBounds();
+  }
+
+  void updateWindowBounds() {
+    View decor = host.getWindow().getDecorView();
+    android.util.DisplayMetrics metrics = host.getResources().getDisplayMetrics();
+    int width = decor.getWidth() > 0 ? decor.getWidth() : metrics.widthPixels;
+    int height = decor.getHeight() > 0 ? decor.getHeight() : metrics.heightPixels;
+    Window window = getWindow();
+    WindowManager.LayoutParams bounds = window.getAttributes();
+    bounds.gravity = Gravity.TOP | Gravity.END;
+    bounds.y = host.settingsPanelTop();
+    bounds.width = Math.round(width * WIDTH_FRACTION);
+    bounds.height = Math.max(1, height - bounds.y - host.dp(BOTTOM_MARGIN_DP));
+    window.setAttributes(bounds);
   }
 
   boolean canResume() {
@@ -89,6 +108,7 @@ final class TvSettingsPanel extends Dialog {
 
   @Override
   public void dismiss() {
+    finishReordering(false);
     parked = false;
     super.dismiss();
   }
@@ -101,21 +121,42 @@ final class TvSettingsPanel extends Dialog {
 
   @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
-    if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) return true;
+    if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
+      if (isShowing() && event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) park();
+      return true;
+    }
+    int key = event.getKeyCode();
+    if (movingRow != null && (key == KeyEvent.KEYCODE_DPAD_UP
+        || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_LEFT
+        || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+      if (event.getAction() == KeyEvent.ACTION_DOWN) {
+        int index = reorderableRows.indexOf(movingRow);
+        if (key == KeyEvent.KEYCODE_DPAD_UP) moveRowTo(index - 1);
+        if (key == KeyEvent.KEYCODE_DPAD_DOWN) moveRowTo(index + 1);
+      }
+      return true;
+    }
     return super.dispatchKeyEvent(event);
   }
 
   @Override
   public void onBackPressed() {
-    if (pages.size() > 1) {
+    if (movingRow != null) {
+      finishReordering(false);
+    } else if (pages.size() > 1) {
       pages.pop();
       drawPage();
     } else {
-      rememberPage();
-      super.hide();
-      parked = true;
-      host.previewSettings(false);
+      park();
     }
+  }
+
+  private void park() {
+    finishReordering(false);
+    rememberPage();
+    parked = true;
+    super.hide();
+    host.settingsVisibilityChanged(false);
   }
 
   private void rememberPage() {
@@ -131,6 +172,9 @@ final class TvSettingsPanel extends Dialog {
   }
 
   private void drawPage() {
+    finishReordering(false);
+    reorderableRows.clear();
+    saveOrder = null;
     accent = host.accent();
     if (pageScroll == null) createPanel();
     heading.removeAllViews();
@@ -202,6 +246,32 @@ final class TvSettingsPanel extends Dialog {
     host.gap(body, 6);
   }
 
+  void countdown(long deadline) {
+    TextView remaining = new TextView(host) {
+      private final Runnable update = new Runnable() {
+        @Override public void run() {
+          long millis = Math.max(0, deadline - android.os.SystemClock.elapsedRealtime());
+          long seconds = (millis + 999) / 1000;
+          setText(String.format(java.util.Locale.ROOT, "Осталось %d:%02d",
+              seconds / 60, seconds % 60));
+          if (seconds > 0 && getWindowVisibility() == VISIBLE) postDelayed(this, 1000);
+        }
+      };
+      @Override protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        removeCallbacks(update);
+        if (visibility == VISIBLE) update.run();
+      }
+      @Override protected void onDetachedFromWindow() {
+        removeCallbacks(update);
+        super.onDetachedFromWindow();
+      }
+    };
+    remaining.setTextSize(15);
+    remaining.setTextColor(NovaUi.TEXT);
+    body.addView(remaining);
+  }
+
   private LinearLayout row(String icon, String title, String subtitle) {
     LinearLayout row = host.horizontal();
     row.setContentDescription(title);
@@ -244,6 +314,9 @@ final class TvSettingsPanel extends Dialog {
       case "♧": return R.drawable.nova_bell;
       case "◷": return R.drawable.nova_clock;
       case "☾": return R.drawable.nova_ui_moon;
+      case "display": return R.drawable.nova_ui_tv;
+      case "screensaver": return R.drawable.nova_ui_screensaver;
+      case "sleep_timer": return R.drawable.nova_ui_sleep_timer;
       case "☁": return R.drawable.nova_weather;
       case "▦":
       case "☷": return R.drawable.nova_apps;
@@ -272,6 +345,7 @@ final class TvSettingsPanel extends Dialog {
       case "↻": return R.drawable.nova_ui_reset;
       case "▷": return R.drawable.nova_ui_play;
       case "calendar": return R.drawable.nova_ui_calendar;
+      case "search": return R.drawable.nova_ui_search;
       case "ruler": return R.drawable.nova_ui_ruler;
       case "T": return R.drawable.nova_ui_type;
       case "☀": return R.drawable.nova_ui_sun;
@@ -295,13 +369,77 @@ final class TvSettingsPanel extends Dialog {
   }
 
   void action(String key, String icon, String title, String subtitle, Runnable action) {
+    addAction(key, icon, title, subtitle, action, false);
+  }
+
+  void reorderableAction(String key, String icon, String title, String subtitle,
+      Runnable action, Consumer<List<String>> save) {
+    LinearLayout row = addAction(key, icon, title, subtitle, () -> {
+      if (movingRow != null) finishReordering(true);
+      else action.run();
+    }, true);
+    reorderableRows.add(row);
+    saveOrder = save;
+    row.setOnLongClickListener(v -> {
+      if (movingRow == null) {
+        movingRow = row;
+        originalRowIndex = reorderableRows.indexOf(row);
+        row.setBackground(NovaUi.interaction(host, 0xff8de7d3));
+      }
+      return true;
+    });
+    RemoteOkHandler.bind(row);
+  }
+
+  private LinearLayout addAction(String key, String icon, String title, String subtitle,
+      Runnable action, boolean reorderable) {
     LinearLayout row = row(icon, title, subtitle);
     row.setTag(key);
+    if (reorderable) {
+      ImageView handle = new ImageView(host);
+      handle.setImageResource(R.drawable.nova_ui_reorder);
+      handle.setColorFilter(accent);
+      row.addView(handle, host.lp(22, 22));
+      row.setContentDescription(title + ". Удерживайте OK для перемещения");
+    }
     ImageView arrow = new ImageView(host);
     arrow.setImageResource(R.drawable.nova_ui_chevron);
     arrow.setColorFilter(accent);
     row.addView(arrow, host.lp(20, 20));
     row.setOnClickListener(v -> action.run());
+    return row;
+  }
+
+  private void moveRowTo(int target) {
+    if (target < 0 || target >= reorderableRows.size()) return;
+    int from = reorderableRows.indexOf(movingRow);
+    if (target == from) return;
+    int bodyIndex = body.indexOfChild(reorderableRows.get(target));
+    // Reattach the focused row at its new index and keep focus on it.
+    body.removeView(movingRow);
+    body.addView(movingRow, bodyIndex);
+    reorderableRows.remove(from);
+    reorderableRows.add(target, movingRow);
+    movingRow.requestFocus();
+    View moved = movingRow;
+    moved.post(() -> {
+      if (moved == movingRow && moved.isFocused()) {
+        moved.requestRectangleOnScreen(new android.graphics.Rect(0, 0, moved.getWidth(),
+            moved.getHeight()), true);
+      }
+    });
+  }
+
+  private void finishReordering(boolean save) {
+    if (movingRow == null) return;
+    if (!save) moveRowTo(originalRowIndex);
+    movingRow.setBackground(NovaUi.interaction(host, accent));
+    movingRow = null;
+    if (save) {
+      ArrayList<String> order = new ArrayList<>();
+      for (View row : reorderableRows) order.add((String) row.getTag());
+      saveOrder.accept(order);
+    }
   }
 
   void unavailable(String icon, String title, String reason) {
@@ -356,7 +494,13 @@ final class TvSettingsPanel extends Dialog {
 
   void toggle(
       String icon, String title, String subtitle, boolean value, Consumer<Boolean> changed) {
+    toggle("setting:" + title, icon, title, subtitle, value, changed);
+  }
+
+  void toggle(String key, String icon, String title, String subtitle, boolean value,
+      Consumer<Boolean> changed) {
     LinearLayout row = row(icon, title, subtitle);
+    row.setTag(key);
     Switch toggle = new Switch(host);
     toggle.setChecked(value);
     int[][] states = {new int[] {android.R.attr.state_checked}, new int[] {}};

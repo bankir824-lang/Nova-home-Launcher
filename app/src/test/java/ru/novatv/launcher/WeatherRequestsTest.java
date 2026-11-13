@@ -22,7 +22,8 @@ public class WeatherRequestsTest {
     WeatherRequests r = new WeatherRequests();
     assertFalse(r.shouldLoad("", 100, 0));
     assertFalse(r.shouldLoad("Москва", 1000, 900));
-    assertTrue(r.shouldLoad("Москва", 1800900, 900));
+    assertFalse(r.shouldLoad("Москва", 3600899, 900));
+    assertTrue(r.shouldLoad("Москва", 3600900, 900));
     assertTrue(r.shouldLoad("Москва", 100, 900));
   }
 

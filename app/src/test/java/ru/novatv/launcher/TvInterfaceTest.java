@@ -15,7 +15,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.*;
 import org.robolectric.annotation.*;
+import org.robolectric.android.controller.ActivityController;
 import org.robolectric.shadows.ShadowDialog;
+import org.robolectric.shadows.ShadowLooper;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 30, qualifiers = "w960dp-h540dp-land-television-xhdpi")
@@ -29,8 +31,10 @@ public class TvInterfaceTest {
     card.showFocus(true, true, Color.WHITE);
     assertNotNull(card.getForeground());
     assertFalse(card.getClipToOutline());
+    android.graphics.drawable.Drawable outline = card.getForeground();
     card.showFocus(false, true, Color.WHITE);
-    assertNull(card.getForeground());
+    assertSame(outline, card.getForeground());
+    assertEquals(0, outline.getAlpha());
     activity.finish();
   }
 
@@ -58,6 +62,60 @@ public class TvInterfaceTest {
     assertSame(root, panel.findViewById(android.R.id.content));
     panel.dismiss();
     activity.finish();
+  }
+
+  @Test
+  public void keepScreenOnAppliesToTheLauncherAndTheSettingsWindow() {
+    MainActivity activity = create();
+    int flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+    activity.setBool("keep_screen_on", true);
+    activity.settings();
+    TvSettingsPanel panel = (TvSettingsPanel) ShadowDialog.getLatestDialog();
+    View root = panel.findViewById(android.R.id.content);
+    View power = root.findViewWithTag("root.power");
+    assertTrue(power.requestFocus());
+    assertTrue(power.performClick());
+    View keepScreenOn = root.findViewWithTag("power.keep_screen_on");
+    assertEquals(flag, activity.getWindow().getAttributes().flags & flag);
+    assertEquals(flag, panel.getWindow().getAttributes().flags & flag);
+    assertTrue(keepScreenOn.performClick());
+    assertFalse(activity.getPreferences(0).getBoolean("keep_screen_on", true));
+    assertEquals(0, activity.getWindow().getAttributes().flags & flag);
+    assertEquals(0, panel.getWindow().getAttributes().flags & flag);
+    panel.onBackPressed();
+    assertEquals("root.power", panel.getCurrentFocus().getTag());
+    assertSame(root, panel.findViewById(android.R.id.content));
+    panel.dismiss();
+    activity.finish();
+  }
+
+  @Test
+  public void screensaverResetsOnInteractionAndConsumesTheWakePress() {
+    ActivityController<MainActivity> controller =
+        Robolectric.buildActivity(MainActivity.class).setup().visible();
+    MainActivity activity = controller.get();
+    View root = activity.findViewById(android.R.id.content);
+    ShadowLooper main = shadowOf(android.os.Looper.getMainLooper());
+    activity.getPreferences(0).edit().putBoolean(NovaScreensaver.ENABLED, true)
+        .putInt(NovaScreensaver.DELAY, 1).apply();
+    controller.windowFocusChanged(true);
+
+    main.idleFor(java.time.Duration.ofSeconds(59));
+    assertNull(root.findViewWithTag("nova.screensaver"));
+    activity.onUserInteraction();
+    main.idleFor(java.time.Duration.ofSeconds(59));
+    assertNull(root.findViewWithTag("nova.screensaver"));
+    main.idleFor(java.time.Duration.ofSeconds(1));
+    assertNotNull(root.findViewWithTag("nova.screensaver"));
+
+    assertTrue(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU)));
+    assertTrue(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MENU)));
+    assertNull(root.findViewWithTag("nova.screensaver"));
+    assertNull(ShadowDialog.getLatestDialog());
+    controller.pause();
+    main.idleFor(java.time.Duration.ofMinutes(1));
+    assertNull(root.findViewWithTag("nova.screensaver"));
+    controller.stop().destroy();
   }
 
   @Test
@@ -95,20 +153,226 @@ public class TvInterfaceTest {
   }
 
   @Test
-  public void repeatedAppearanceChangesKeepTheSamePreviewRoot() {
+  public void repeatedAppearanceChangesKeepTheSameHomeScreen() {
     MainActivity activity = create();
     ViewGroup windowContent = activity.findViewById(android.R.id.content);
-    View preview = windowContent.getChildAt(0);
+    View home = windowContent.getChildAt(0);
     activity.settings();
-    assertEquals(1f, preview.getScaleX(), 0f);
-    assertEquals(0f, preview.getRotationY(), 0f);
-    assertEquals(0f, preview.getTranslationX(), 0f);
+    assertEquals(1f, home.getScaleX(), 0f);
+    assertEquals(0f, home.getRotationY(), 0f);
+    assertEquals(0f, home.getTranslationX(), 0f);
     for (int width = 128; width < 136; width++) activity.setInt("card_width", width);
     shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(250));
-    assertSame(preview, windowContent.getChildAt(0));
+    assertSame(home, windowContent.getChildAt(0));
     assertEquals(135, activity.getPreferences(0).getInt("card_width", 0));
     ((TvSettingsPanel) ShadowDialog.getLatestDialog()).dismiss();
     activity.finish();
+  }
+
+  @Test
+  public void holdingOkOnHeaderGearOpensOnlyAndroidSettings() {
+    MainActivity activity = create();
+    layoutRemoteTarget(activity.getWindow().getDecorView(), 1920);
+    View gear = activity.findViewById(android.R.id.content).findViewWithTag("header.settings");
+    gear.setFocusableInTouchMode(true);
+    assertTrue(gear.requestFocus());
+    activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER));
+    shadowOf(android.os.Looper.getMainLooper()).idleFor(
+        java.time.Duration.ofMillis(ViewConfiguration.getLongPressTimeout()));
+    activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER));
+    assertEquals(android.provider.Settings.ACTION_SETTINGS,
+        shadowOf(activity).getNextStartedActivity().getAction());
+    assertNull(ShadowDialog.getLatestDialog());
+    activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER));
+    activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER));
+    assertTrue(ShadowDialog.getLatestDialog().isShowing());
+    assertNull(shadowOf(activity).getNextStartedActivity());
+    activity.finish();
+  }
+
+  @Test
+  public void returningFromCancelledWallpaperPickKeepsTheSameRows() {
+    MainActivity activity = create();
+    View root = activity.findViewById(android.R.id.content);
+    View header = root.findViewWithTag("header.controls");
+    View card = root.findViewWithTag("app_order:test.tv.app0");
+    assertNotNull(header);
+    assertNotNull(card);
+    for (int request : new int[] {7, 8}) {
+      activity.onPause();
+      activity.onActivityResult(request, android.app.Activity.RESULT_CANCELED, null);
+      activity.onResume();
+      assertSame(header, root.findViewWithTag("header.controls"));
+      assertSame(card, root.findViewWithTag("app_order:test.tv.app0"));
+    }
+    activity.finish();
+  }
+
+  @Test
+  public void nightDimmingUpdatesOnlyTheWallpaperShade() {
+    MainActivity activity = create();
+    View root = activity.findViewById(android.R.id.content);
+    View shade = root.findViewWithTag("wallpaper.night_shade");
+    View card = root.findViewWithTag("app_order:test.tv.app0");
+    assertNotNull(card);
+    assertEquals(0f, shade.getAlpha(), 0f);
+    java.util.Calendar now = java.util.Calendar.getInstance();
+    int minute = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE);
+    activity.setInt(NightDimming.START, (minute + 1430) % 1440);
+    activity.setInt(NightDimming.END, (minute + 10) % 1440);
+    activity.setInt(NightDimming.AMOUNT, 60);
+    activity.setInt(NightDimming.STEP, 60);
+    activity.setBool(NightDimming.ENABLED, true);
+    shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2));
+    assertEquals(0.6f, shade.getAlpha(), 0f);
+    assertSame(card, root.findViewWithTag("app_order:test.tv.app0"));
+    activity.setBool(NightDimming.ENABLED, false);
+    shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2));
+    assertEquals(0f, shade.getAlpha(), 0f);
+    activity.finish();
+  }
+
+  @Test
+  public void nightDimmingReachesTheMaximumInShortIntervals() {
+    assertEquals(10, NightDimming.amountAt(22 * 60, 22 * 60, 0, 35, 10));
+    assertEquals(20, NightDimming.amountAt(22 * 60 + 20, 22 * 60, 0, 35, 10));
+    assertEquals(30, NightDimming.amountAt(22 * 60 + 40, 22 * 60, 0, 35, 10));
+    assertEquals(35, NightDimming.amountAt(23 * 60, 22 * 60, 0, 35, 10));
+    assertEquals(30, NightDimming.amountAt(23 * 60 + 10, 22 * 60, 0, 35, 10));
+    assertEquals(10, NightDimming.amountAt(23 * 60 + 59, 22 * 60, 0, 35, 10));
+    assertEquals(0, NightDimming.amountAt(0, 22 * 60, 0, 35, 10));
+    for (int duration = 1; duration < 1440; duration++) {
+      int start = 23 * 60;
+      int end = (start + duration) % 1440;
+      int previous = 0;
+      for (int offset = 0; offset < duration; offset++) {
+        int value = NightDimming.amountAt((start + offset) % 1440, start, end, 97, 13);
+        assertTrue(value >= 0 && value <= 97);
+        assertTrue(offset < duration / 2 ? value >= previous : value <= previous || value == 97);
+        previous = value;
+      }
+      assertEquals(97, NightDimming.amountAt((start + duration / 2) % 1440, start, end, 97, 13));
+    }
+  }
+
+  @Test
+  public void nightDimmingSupportsMidnightAndExcludesTheEndTime() {
+    assertTrue(NightDimming.includes(22 * 60, 22 * 60, 7 * 60));
+    assertTrue(NightDimming.includes(0, 22 * 60, 7 * 60));
+    assertFalse(NightDimming.includes(7 * 60, 22 * 60, 7 * 60));
+    assertTrue(NightDimming.includes(12 * 60, 10 * 60, 14 * 60));
+    assertFalse(NightDimming.includes(9 * 60, 10 * 60, 14 * 60));
+    assertFalse(NightDimming.includes(0, 0, 0));
+    assertEquals(10, NightDimming.amountAt(22 * 60, 22 * 60, 7 * 60, 35, 10));
+    assertEquals(20, NightDimming.amountAt(23 * 60, 22 * 60, 7 * 60, 35, 10));
+    assertEquals(35, NightDimming.amountAt(2 * 60, 22 * 60, 7 * 60, 35, 10));
+    assertEquals(10, NightDimming.amountAt(6 * 60, 22 * 60, 7 * 60, 35, 10));
+    assertEquals(0, NightDimming.amountAt(7 * 60, 22 * 60, 7 * 60, 35, 10));
+  }
+
+  @Test
+  public void rowVisibilityAndHeadingSettingsKeepTheSameCards() {
+    MainActivity activity = create();
+    View root = activity.findViewById(android.R.id.content);
+    View row = root.findViewWithTag("home.row:tv");
+    View card = root.findViewWithTag("app_order:test.tv.app0");
+    assertNotNull(card);
+    activity.setBool("show_all", false);
+    assertEquals(View.GONE, row.getVisibility());
+    activity.setBool("show_all", true);
+    assertEquals(View.VISIBLE, row.getVisibility());
+    activity.setBool("show_titles", false);
+    activity.setBool("show_category_icons", false);
+    activity.setBool("remember_focus", false);
+    activity.setBool("pin_row", true);
+    assertSame(row, root.findViewWithTag("home.row:tv"));
+    assertSame(card, root.findViewWithTag("app_order:test.tv.app0"));
+    activity.finish();
+  }
+
+  @Test
+  public void statusItemsHaveRequestedOrderAndRemoteFocus() {
+    MainActivity activity = create();
+    View root = activity.findViewById(android.R.id.content);
+    View network = root.findViewWithTag("header.network");
+    View notifications = root.findViewWithTag("header.notifications");
+    ViewGroup controls = root.findViewWithTag("header.controls");
+    ViewGroup information = root.findViewWithTag("header.information");
+    String[] controlsOrder = {"header.apps", "header.search", "header.settings",
+        "header.timer", "header.network", "header.notifications"};
+    for (int i = 0; i < controlsOrder.length; i++)
+      assertEquals(controlsOrder[i], controls.getChildAt(i).getTag());
+    String[] informationOrder = {"header.weather", "header.date", "header.clock"};
+    for (int i = 0; i < informationOrder.length; i++)
+      assertEquals(informationOrder[i], information.getChildAt(i).getTag());
+    assertSame(controls, ((ViewGroup) controls.getParent()).getChildAt(0));
+    assertTrue(network.isFocusable());
+    assertTrue(notifications.isFocusable());
+    assertTrue(notifications.performClick());
+    assertTrue(ShadowDialog.getLatestDialog().isShowing());
+    activity.finish();
+  }
+
+  @Test
+  public void blockAndRowReorderingSaveOnOkAndRestoreOnBack() {
+    MainActivity activity = create();
+    activity.settings();
+    TvSettingsPanel panel = (TvSettingsPanel) ShadowDialog.getLatestDialog();
+    View root = panel.findViewById(android.R.id.content);
+    root.findViewWithTag("root.status").performClick();
+    root.findViewWithTag("status.content").performClick();
+    View controls = root.findViewWithTag("controls");
+    controls.requestFocus();
+    controls.performLongClick();
+    panel.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
+    assertSame(controls, panel.getCurrentFocus());
+    controls.performClick();
+    assertEquals("clock|controls", activity.getPreferences(0).getString("status_block_order", ""));
+    View headerControls = activity.findViewById(android.R.id.content).findViewWithTag("header.controls");
+    assertEquals(1, ((ViewGroup) headerControls.getParent()).indexOfChild(headerControls));
+    panel.onBackPressed();
+    panel.onBackPressed();
+    root.findViewWithTag("root.home").performClick();
+    root.findViewWithTag("home.rows").performClick();
+    View favorites = root.findViewWithTag("favorites");
+    ViewGroup rows = (ViewGroup) favorites.getParent();
+    int first = rows.indexOfChild(favorites);
+    favorites.requestFocus();
+    favorites.performLongClick();
+    panel.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
+    assertEquals(first + 1, rows.indexOfChild(favorites));
+    panel.onBackPressed();
+    assertEquals(first, rows.indexOfChild(favorites));
+    assertFalse(activity.getPreferences(0).contains("home_row_order"));
+    panel.dismiss();
+    activity.finish();
+  }
+
+  @Test
+  public void sleepTimerDimsAfterTheDeadlineAndAKeyRestoresTheWindow() {
+    ActivityController<MainActivity> controller =
+        Robolectric.buildActivity(MainActivity.class).setup().visible();
+    MainActivity activity = controller.get();
+    controller.windowFocusChanged(true);
+    View root = activity.findViewById(android.R.id.content);
+    ShadowLooper main = shadowOf(android.os.Looper.getMainLooper());
+    activity.setBool("keep_screen_on", true);
+    activity.setSleepTimer(15);
+    main.idleFor(java.time.Duration.ofMinutes(14));
+    assertNull(root.findViewWithTag("nova.sleep"));
+    main.idleFor(java.time.Duration.ofMinutes(1));
+    assertNotNull(root.findViewWithTag("nova.sleep"));
+    int flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+    assertEquals(0, activity.getWindow().getAttributes().flags & flag);
+    assertTrue(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER)));
+    assertTrue(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER)));
+    assertNull(root.findViewWithTag("nova.sleep"));
+    assertEquals(flag, activity.getWindow().getAttributes().flags & flag);
+    activity.setSleepTimer(15);
+    activity.setSleepTimer(0);
+    main.idleFor(java.time.Duration.ofMinutes(15));
+    assertNull(root.findViewWithTag("nova.sleep"));
+    controller.pause().stop().destroy();
   }
 
   @Test
@@ -261,6 +525,27 @@ public class TvInterfaceTest {
     assertFalse(dialog instanceof TvSettingsPanel);
     dialog.dismiss();
     a.finish();
+  }
+
+  @Test
+  public void horizontalKeysStopAtTheEdgesOfAnAppLine() {
+    MainActivity activity = create(15);
+    View decor = activity.getWindow().getDecorView();
+    layoutRemoteTarget(decor, 1920);
+    View first = decor.findViewWithTag("app_order:test.tv.app0");
+    ViewGroup line = (ViewGroup) first.getParent();
+    assertTrue(line.getChildCount() > 1);
+    View last = line.getChildAt(line.getChildCount() - 1);
+    for (int i = 0; i < line.getChildCount(); i++) line.getChildAt(i).setFocusableInTouchMode(true);
+    assertTrue(first.requestFocus());
+    assertTrue(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT)));
+    assertSame(first, decor.findFocus());
+    activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
+    assertSame(line.getChildAt(1), decor.findFocus());
+    assertTrue(last.requestFocus());
+    assertTrue(activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT)));
+    assertSame(last, decor.findFocus());
+    activity.finish();
   }
 
   @Test

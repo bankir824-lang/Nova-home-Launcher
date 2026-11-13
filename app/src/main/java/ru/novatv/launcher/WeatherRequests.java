@@ -2,6 +2,7 @@ package ru.novatv.launcher;
 
 /** Accessed only on the UI thread; old cities cannot overwrite newer requests. */
 final class WeatherRequests {
+  static final long INTERVAL_MS = 60 * 60 * 1000L;
   private int generation;
   private boolean loading;
 
@@ -13,7 +14,7 @@ final class WeatherRequests {
   boolean shouldLoad(String city, long now, long updated) {
     return !city.isEmpty()
         && !loading
-        && (updated == 0 || now < updated || now - updated >= 1800000);
+        && (updated == 0 || now < updated || now - updated >= INTERVAL_MS);
   }
 
   int begin() {
