@@ -100,6 +100,9 @@ public class TvInterfaceTest {
     ViewGroup windowContent = activity.findViewById(android.R.id.content);
     View preview = windowContent.getChildAt(0);
     activity.settings();
+    assertEquals(1f, preview.getScaleX(), 0f);
+    assertEquals(0f, preview.getRotationY(), 0f);
+    assertEquals(0f, preview.getTranslationX(), 0f);
     for (int width = 128; width < 136; width++) activity.setInt("card_width", width);
     shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(250));
     assertSame(preview, windowContent.getChildAt(0));

@@ -385,7 +385,6 @@ public class MainActivity extends Activity {
     if (getPreferences(0).getBoolean("keep_screen_on", false))
       getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-    if (previewOpen) applyPreviewTransform(true);
   }
 
   private void applyLauncherPadding() {
@@ -1150,21 +1149,6 @@ public class MainActivity extends Activity {
         restoreAppFocus();
       }
     }
-    applyPreviewTransform(open);
-  }
-
-  private void applyPreviewTransform(boolean open) {
-    if (launcherView == null) return;
-    float width = getResources().getDisplayMetrics().widthPixels;
-    launcherView.setPivotX(width * 0.5f);
-    launcherView.setPivotY(getResources().getDisplayMetrics().heightPixels / 2f);
-    launcherView.setCameraDistance(width * 4f);
-    // Keep the live preview at its final scale without compositing the full TV scene every frame.
-    float previewScale = 1f - TvSettingsPanel.WIDTH_FRACTION - 0.05f;
-    launcherView.setScaleX(open ? previewScale : 1f);
-    launcherView.setScaleY(open ? previewScale : 1f);
-    launcherView.setRotationY(open ? -5f : 0f);
-    launcherView.setTranslationX(open ? -width * TvSettingsPanel.WIDTH_FRACTION / 2f : 0f);
   }
 
   void setBool(String key, boolean value) {

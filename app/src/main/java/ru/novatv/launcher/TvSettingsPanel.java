@@ -12,7 +12,6 @@ import java.util.function.IntConsumer;
 /** A remote-friendly settings stack. The launcher behind the dialog remains a live preview. */
 final class TvSettingsPanel extends Dialog {
   static final float WIDTH_FRACTION = 1f / 3f;
-  private static final long ENTER_DURATION_MS = 240;
 
   interface Page {
     void build(TvSettingsPanel panel);
@@ -34,7 +33,6 @@ final class TvSettingsPanel extends Dialog {
   private ScrollView pageScroll;
   private LinearLayout body;
   private LinearLayout heading;
-  private LinearLayout panel;
   private View first;
   private String currentTitle = "";
   private boolean parked;
@@ -59,11 +57,12 @@ final class TvSettingsPanel extends Dialog {
     int width = Math.round(host.getWindow().getDecorView().getWidth() * WIDTH_FRACTION);
     if (width == 0)
       width = Math.round(host.getResources().getDisplayMetrics().widthPixels * WIDTH_FRACTION);
+    window.setLayout(width, ViewGroup.LayoutParams.MATCH_PARENT);
     if (parked) {
       parked = false;
       if (accent != host.accent()) drawPage();
       host.previewSettings(true);
-      showWithSlide(width);
+      super.show();
       Object key = pages.peek().focusKey;
       View target = key == null ? first : body.findViewWithTag(key);
       if (target != null) target.requestFocus();
@@ -71,24 +70,12 @@ final class TvSettingsPanel extends Dialog {
     }
     window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
     window.setGravity(Gravity.END);
-    window.setWindowAnimations(0);
+    window.setWindowAnimations(R.style.NovaSettingsWindowAnimation);
     window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     drawPage();
     host.previewSettings(true);
-    showWithSlide(width);
-  }
-
-  private void showWithSlide(int width) {
-    panel.animate().cancel();
-    panel.setTranslationX(width);
     super.show();
-    getWindow().setLayout(width, ViewGroup.LayoutParams.MATCH_PARENT);
-    panel.animate()
-        .translationX(0)
-        .setInterpolator(new android.view.animation.DecelerateInterpolator())
-        .setDuration(ENTER_DURATION_MS)
-        .withLayer()
-        .start();
+    window.setLayout(width, ViewGroup.LayoutParams.MATCH_PARENT);
   }
 
   boolean canResume() {
@@ -102,7 +89,6 @@ final class TvSettingsPanel extends Dialog {
 
   @Override
   public void dismiss() {
-    if (panel != null) panel.animate().cancel();
     parked = false;
     super.dismiss();
   }
@@ -126,7 +112,6 @@ final class TvSettingsPanel extends Dialog {
       drawPage();
     } else {
       rememberPage();
-      panel.animate().cancel();
       super.hide();
       parked = true;
       host.previewSettings(false);
@@ -176,7 +161,7 @@ final class TvSettingsPanel extends Dialog {
   }
 
   private void createPanel() {
-    panel = host.vertical();
+    LinearLayout panel = host.vertical();
     panel.setBackground(NovaUi.surface(host));
     heading = host.vertical();
     heading.setPadding(host.dp(20), host.dp(20), host.dp(20), host.dp(10));

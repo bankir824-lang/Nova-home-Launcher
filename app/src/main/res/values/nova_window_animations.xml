@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="NovaSettingsWindowAnimation">
+        <item name="android:windowEnterAnimation">@anim/nova_settings_enter</item>
+        <item name="android:windowShowAnimation">@anim/nova_settings_enter</item>
+        <item name="android:windowExitAnimation">@null</item>
+        <item name="android:windowHideAnimation">@null</item>
+    </style>
+</resources>
