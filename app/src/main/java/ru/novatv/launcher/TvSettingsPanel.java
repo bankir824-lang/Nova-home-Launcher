@@ -92,7 +92,7 @@ final class TvSettingsPanel extends Dialog {
     scroll.setVerticalScrollBarEnabled(false);
     GradientDrawable bg =
         new GradientDrawable(
-            GradientDrawable.Orientation.TL_BR, new int[] {0xf231364d, 0xf21a2234});
+            GradientDrawable.Orientation.TL_BR, new int[] {0xfa20324c, 0xfa101a30});
     bg.setCornerRadius(host.dp(22));
     scroll.setBackground(bg);
     body = host.vertical();
@@ -116,7 +116,7 @@ final class TvSettingsPanel extends Dialog {
 
   void title(String icon, String title, String subtitle) {
     currentTitle = title;
-    TextView heading = host.label(icon + "  " + title, 24, accent);
+    TextView heading = host.label(title, 24, 0xfff4fdff);
     heading.setTypeface(null, android.graphics.Typeface.BOLD);
     body.addView(heading);
     if (!subtitle.isEmpty()) {
@@ -142,8 +142,10 @@ final class TvSettingsPanel extends Dialog {
     row.setFocusable(true);
     row.setFocusableInTouchMode(true);
     row.setBackground(host.shape(0x00212a40, 26));
-    TextView badge = host.label(icon, 21, accent);
-    badge.setGravity(Gravity.CENTER);
+    ImageView badge = new ImageView(host);
+    badge.setImageResource(iconFor(icon));
+    badge.setColorFilter(accent);
+    badge.setPadding(host.dp(7), host.dp(7), host.dp(7), host.dp(7));
     badge.setBackground(host.shape((accent & 0x00ffffff) | 0x22000000, 18));
     row.addView(badge, host.lp(32, 36));
     LinearLayout labels = host.vertical();
@@ -157,12 +159,29 @@ final class TvSettingsPanel extends Dialog {
       labels.addView(hint);
     }
     row.setOnFocusChangeListener(
-        (v, focus) -> row.setBackground(host.shape(focus ? 0x667e91b6 : 0x00212a40, 26)));
+        (v, focus) -> {
+          GradientDrawable background = host.shape(focus ? 0xff2a4462 : 0x00212a40, 16);
+          if (focus) background.setStroke(host.dp(2), accent);
+          row.setBackground(background);
+        });
     LinearLayout.LayoutParams rp = host.lp(-1, -2);
     rp.bottomMargin = host.dp(4);
     body.addView(row, rp);
     if (first == null) first = row;
     return row;
+  }
+
+  private int iconFor(String icon) {
+    switch (icon) {
+      case "♧": return R.drawable.nova_bell;
+      case "◷":
+      case "☾": return R.drawable.nova_clock;
+      case "☁": return R.drawable.nova_weather;
+      case "▦":
+      case "▣": return R.drawable.nova_apps;
+      case "◉": return R.drawable.nova_wifi;
+      default: return R.drawable.nova_menu;
+    }
   }
 
   void action(String icon, String title, String subtitle, Runnable action) {
@@ -196,6 +215,24 @@ final class TvSettingsPanel extends Dialog {
       Runnable click,
       Runnable longClick) {
     LinearLayout row = row("", title, subtitle);
+    replaceBadge(row, icon);
+    row.setOnClickListener(v -> click.run());
+    row.setOnLongClickListener(
+        v -> {
+          longClick.run();
+          return true;
+        });
+    RemoteOkHandler.bind(row);
+  }
+
+  void notification(String title, String subtitle, android.graphics.drawable.Drawable icon,
+      Runnable click) {
+    LinearLayout row = row("", title, subtitle);
+    replaceBadge(row, icon);
+    row.setOnClickListener(v -> click.run());
+  }
+
+  private void replaceBadge(LinearLayout row, android.graphics.drawable.Drawable icon) {
     if (icon != null) {
       View old = row.getChildAt(0);
       android.view.ViewGroup.LayoutParams params = old.getLayoutParams();
@@ -205,13 +242,6 @@ final class TvSettingsPanel extends Dialog {
       image.setScaleType(ImageView.ScaleType.FIT_CENTER);
       row.addView(image, 0, params);
     }
-    row.setOnClickListener(v -> click.run());
-    row.setOnLongClickListener(
-        v -> {
-          longClick.run();
-          return true;
-        });
-    RemoteOkHandler.bind(row);
   }
 
   void toggle(

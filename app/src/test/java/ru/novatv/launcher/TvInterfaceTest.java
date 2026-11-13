@@ -22,6 +22,25 @@ import org.robolectric.shadows.ShadowDialog;
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class TvInterfaceTest {
   @Test
+  public void cardFocusOutlineIsASeparateForeground() {
+    MainActivity activity = create();
+    AppCardView card = new AppCardView(activity, 10, Color.BLUE);
+    assertTrue(card.contents.getClipToOutline());
+    card.showFocus(true, true, Color.WHITE);
+    assertNotNull(card.getForeground());
+    assertFalse(card.getClipToOutline());
+    card.showFocus(false, true, Color.WHITE);
+    assertNull(card.getForeground());
+    activity.finish();
+  }
+
+  @Test
+  public void statusRadiusReachesHalfTheHeightAtOneHundredPercent() {
+    assertEquals(0f, StatusBarView.radius(200, 40, 0), 0f);
+    assertEquals(20f, StatusBarView.radius(200, 40, 100), 0f);
+  }
+
+  @Test
   public void backReturnsFocusToCardsSetting() {
     MainActivity activity = create();
     activity.openPanelPage(activity::appearanceSettings);
