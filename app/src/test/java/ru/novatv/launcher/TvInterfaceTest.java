@@ -21,6 +21,22 @@ import org.robolectric.shadows.ShadowDialog;
 @Config(sdk = 30, qualifiers = "w960dp-h540dp-land-television-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class TvInterfaceTest {
+  @Test
+  public void novaTvHasSeparateEntryPointsForInstallerTvAndHome() {
+    Context context = RuntimeEnvironment.getApplication();
+    PackageManager packages = context.getPackageManager();
+    for (String category : new String[] {
+        Intent.CATEGORY_LAUNCHER, Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_HOME
+    }) {
+      Intent intent = new Intent(Intent.ACTION_MAIN).addCategory(category)
+          .setPackage(context.getPackageName());
+      int flags = Intent.CATEGORY_HOME.equals(category) ? PackageManager.MATCH_DEFAULT_ONLY : 0;
+      ResolveInfo resolved = packages.resolveActivity(intent, flags);
+      assertNotNull(category, resolved);
+      assertEquals(MainActivity.class.getName(), resolved.activityInfo.name);
+    }
+  }
+
   private MainActivity create() {
     return create(6);
   }

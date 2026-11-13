@@ -602,7 +602,7 @@ public class MainActivity extends Activity {
       rowTitle("≡", category);
       if (!visibleApps(apps, false).isEmpty()) rowApps(apps, false, "category_order_" + category);
     }
-    if (getPreferences(0).getBoolean("show_inputs", false)) {
+    if (getPreferences(0).getBoolean("show_inputs", false) && !availableTvInputs().isEmpty()) {
       rowTitle("⇥", "Источники сигнала");
       LinearLayout inputs = horizontal();
       content.addView(inputs);
@@ -1150,11 +1150,11 @@ public class MainActivity extends Activity {
         "Настройки NovaTV",
         "Оформление, поведение, система",
         () -> p.open(this::mainSettings));
-    p.action(
+    systemSetting(p,
         "⌂",
         "Настройки Android",
         "Штатные настройки телевизора",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_SETTINGS)));
+        android.provider.Settings.ACTION_SETTINGS);
     p.action(
         "▣",
         "Профили экрана",
@@ -1164,35 +1164,32 @@ public class MainActivity extends Activity {
 
   void mainSettings(TvSettingsPanel p) {
     p.title("⚙", "Настройки NovaTV", "");
-    p.action("⏻", "Электропитание", "Экран и заставка Android", () -> p.open(this::powerSettings));
-    p.action(
-        "♧",
-        "Родительский контроль",
-        "PIN настроек и запуска в NovaTV",
-        () -> p.open(this::parentalSettings));
-    p.action(
-        "⌁",
-        "Пульты и устройства",
-        "Системное сопряжение Bluetooth",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)));
     p.action("☷", "Основные", "Автозапуск, приложения", () -> p.open(this::generalSettings));
     p.action(
         "▣",
         "Внешний вид",
         "Карточки, категории, часы и обои",
         () -> p.open(this::appearanceSettings));
-    p.action("⇥", "Источники сигнала", "Входы телевизора", this::showInputs);
-    p.action(
+    systemSetting(p,
         "☾",
         "Режим простоя",
-        "Заставка Android и тайм-аут экрана",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_DREAM_SETTINGS)));
+        "Заставка Android",
+        android.provider.Settings.ACTION_DREAM_SETTINGS);
+    if (availableTvInputs().isEmpty())
+      p.unavailable("⇥", "Источник сигнала", "Нет доступных входов телевизора");
+    else p.action("⇥", "Источник сигнала", "Входы телевизора", this::showInputs);
+    systemSetting(p, "⌁", "Пульты и устройства", "Системное сопряжение Bluetooth",
+        android.provider.Settings.ACTION_BLUETOOTH_SETTINGS);
+    p.action("⏻", "Электропитание", "Экран и заставка Android", () -> p.open(this::powerSettings));
     p.action(
+        "♧", "Родительский контроль", "PIN настроек и запуска в NovaTV",
+        () -> p.open(this::parentalSettings));
+    systemSetting(p,
         "♿",
         "Специальные возможности",
         "Системные настройки доступности",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-    p.action("◎", "Диагностика TCL", "Устройство, память и погода", this::diagnostics);
+        android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+    p.action("◎", "Диагностика", "Устройство, память и погода", this::diagnostics);
     p.action(
         "↺", "Сбросить оформление", "Приложения и избранное сохранятся", this::resetAppearance);
   }
@@ -1200,16 +1197,41 @@ public class MainActivity extends Activity {
   void powerSettings(TvSettingsPanel p) {
     p.title("⏻", "Электропитание", "NovaTV не меняет системные правила выключения");
     toggle(p, "☀", "Не гасить экран в NovaTV", "keep_screen_on", false);
-    p.action(
-        "☾",
-        "Заставка Android",
-        "",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_DREAM_SETTINGS)));
-    p.action(
-        "▣",
-        "Настройки экрана",
-        "",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_DISPLAY_SETTINGS)));
+    systemSetting(p, "☾", "Заставка Android", "",
+        android.provider.Settings.ACTION_DREAM_SETTINGS);
+    systemSetting(p, "▣", "Настройки экрана", "",
+        android.provider.Settings.ACTION_DISPLAY_SETTINGS,
+        android.provider.Settings.ACTION_SETTINGS);
+  }
+
+  private void systemSetting(TvSettingsPanel panel, String icon, String title, String subtitle,
+      String action, String fallbackAction) {
+    Intent primary = new Intent(action);
+    if (canOpen(primary)) {
+      panel.action(icon, title, subtitle, () -> safeStart(primary));
+      return;
+    }
+    if (fallbackAction != null) {
+      Intent fallback = new Intent(fallbackAction);
+      if (canOpen(fallback)) {
+        panel.action(icon, title, "Откроются общие настройки Android", () -> safeStart(fallback));
+        return;
+      }
+    }
+    panel.unavailable(icon, title, "Не поддерживается прошивкой");
+  }
+
+  private void systemSetting(TvSettingsPanel panel, String icon, String title, String subtitle,
+      String action) {
+    systemSetting(panel, icon, title, subtitle, action, null);
+  }
+
+  private boolean canOpen(Intent intent) {
+    ResolveInfo resolved = getPackageManager().resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY);
+    if (resolved == null || resolved.activityInfo == null || !resolved.activityInfo.exported)
+      return false;
+    String permission = resolved.activityInfo.permission;
+    return permission == null || checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
   }
 
   void parentalSettings(TvSettingsPanel p) {
@@ -1581,21 +1603,21 @@ public class MainActivity extends Activity {
           refreshApps();
           render();
         });
-    p.action(
+    systemSetting(p,
         "◉",
         "Сеть",
         "",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)));
-    p.action(
+        android.provider.Settings.ACTION_WIFI_SETTINGS);
+    systemSetting(p,
         "◷",
         "Дата и время",
         "",
-        () -> safeStart(new Intent(android.provider.Settings.ACTION_DATE_SETTINGS)));
-    p.action(
+        android.provider.Settings.ACTION_DATE_SETTINGS);
+    systemSetting(p,
         "⌁",
         "Голосовой поиск",
         "Системный поиск, если установлен",
-        () -> safeStart(new Intent(android.app.SearchManager.INTENT_ACTION_GLOBAL_SEARCH)));
+        android.app.SearchManager.INTENT_ACTION_GLOBAL_SEARCH);
   }
 
   void chooseColor(String key, boolean reopen) {
@@ -1821,16 +1843,29 @@ public class MainActivity extends Activity {
                   .show());
   }
 
-  void showInputs() {
+  private List<android.media.tv.TvInputInfo> availableTvInputs() {
     android.media.tv.TvInputManager manager =
         (android.media.tv.TvInputManager) getSystemService(TV_INPUT_SERVICE);
     List<android.media.tv.TvInputInfo> inputs = new ArrayList<>();
     try {
-      inputs.addAll(manager.getTvInputList());
-    } catch (Exception e) {
-      Toast.makeText(this, "Нет доступа к входам ТВ", Toast.LENGTH_LONG).show();
-      return;
+      if (manager != null)
+        for (android.media.tv.TvInputInfo input : manager.getTvInputList())
+          if (canOpen(tvInputIntent(input))) inputs.add(input);
+    } catch (SecurityException ignored) {
+      // Some firmware exposes the service only to its built-in launcher.
     }
+    return inputs;
+  }
+
+  private Intent tvInputIntent(android.media.tv.TvInputInfo input) {
+    android.net.Uri uri = input.isPassthroughInput()
+        ? android.media.tv.TvContract.buildChannelUriForPassthroughInput(input.getId())
+        : android.media.tv.TvContract.Channels.CONTENT_URI;
+    return new Intent(Intent.ACTION_VIEW, uri);
+  }
+
+  void showInputs() {
+    List<android.media.tv.TvInputInfo> inputs = availableTvInputs();
     String[] names = new String[inputs.size()];
     for (int i = 0; i < inputs.size(); i++) names[i] = inputs.get(i).loadLabel(this).toString();
     if (names.length == 0) {
@@ -1839,17 +1874,7 @@ public class MainActivity extends Activity {
     }
     new AlertDialog.Builder(this)
         .setTitle("Источники сигнала")
-        .setItems(
-            names,
-            (d, n) -> {
-              android.media.tv.TvInputInfo input = inputs.get(n);
-              android.net.Uri uri =
-                  input.isPassthroughInput()
-                      ? android.media.tv.TvContract.buildChannelUriForPassthroughInput(
-                          input.getId())
-                      : android.media.tv.TvContract.Channels.CONTENT_URI;
-              safeStart(new Intent(Intent.ACTION_VIEW, uri));
-            })
+        .setItems(names, (d, n) -> safeStart(tvInputIntent(inputs.get(n))))
         .setNegativeButton("Закрыть", null)
         .show();
   }
@@ -1865,12 +1890,11 @@ public class MainActivity extends Activity {
 
   void notificationSettings(TvSettingsPanel p) {
     p.title("♧", "Уведомления", "Тексты хранятся только в памяти NovaTV");
-    p.action(
+    systemSetting(p,
         "⚙",
         "Доступ к уведомлениям",
         notificationGranted() ? "Предоставлен" : "Требуется ваше разрешение в Android",
-        () ->
-            safeStart(new Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
+        android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
     if (notificationGranted()) {
       for (NotificationAccess.Item item : NotificationAccess.snapshot())
         p.action(
@@ -2023,7 +2047,7 @@ public class MainActivity extends Activity {
         card.setBackground(shape(0xdd222c40, 10));
         marginAdd(row, card, 108, 128, 10);
         ImageView art = new ImageView(this);
-        art.setImageDrawable(getDrawable(ru.novatv.launcher.R.drawable.ic_launcher));
+        art.setImageDrawable(getDrawable(R.mipmap.ic_launcher));
         art.setScaleType(ImageView.ScaleType.CENTER_CROP);
         card.addView(art, lp(-1, 96));
         TextView title = label(program.title == null ? "Без названия" : program.title, 13, WHITE);
@@ -2194,7 +2218,7 @@ public class MainActivity extends Activity {
             + installed.size()
             + "\nВерсия NovaTV: 0.6.0";
     new AlertDialog.Builder(this)
-        .setTitle("Диагностика TCL")
+        .setTitle("Диагностика устройства")
         .setMessage(s)
         .setPositiveButton("Закрыть", null)
         .show();

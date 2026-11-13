@@ -139,6 +139,13 @@ final class TvSettingsPanel extends Dialog {
     row.setOnClickListener(v -> action.run());
   }
 
+  void unavailable(String icon, String title, String reason) {
+    LinearLayout row = row(icon, title, reason);
+    row.setEnabled(false);
+    row.setFocusable(false);
+    if (first == row) first = null;
+  }
+
   void refresh() {
     drawPage();
   }
