@@ -3,7 +3,6 @@ package ru.novatv.launcher;
 import android.app.Dialog;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
 import android.view.*;
 import android.widget.*;
 import java.util.ArrayDeque;
@@ -21,6 +20,7 @@ final class TvSettingsPanel extends Dialog {
     final Page page;
     Object focusKey;
     int scrollY;
+    int focusIndex;
 
     PageState(Page page) {
       this.page = page;
@@ -30,6 +30,7 @@ final class TvSettingsPanel extends Dialog {
   private final ArrayDeque<PageState> pages = new ArrayDeque<>();
   private ScrollView pageScroll;
   private LinearLayout body;
+  private LinearLayout heading;
   private View first;
   private String currentTitle = "";
 
@@ -81,48 +82,74 @@ final class TvSettingsPanel extends Dialog {
     PageState state = pages.peek();
     View focused = pageScroll.findFocus();
     state.focusKey = focused == null ? null : focused.getTag();
+    if (focused != null) {
+      java.util.ArrayList<View> targets = body.getFocusables(View.FOCUS_FORWARD);
+      state.focusIndex = Math.max(0, targets.indexOf(focused));
+    }
     state.scrollY = pageScroll.getScrollY();
   }
 
   private void drawPage() {
     accent = host.accent();
-    ScrollView scroll = new ScrollView(host);
-    pageScroll = scroll;
-    scroll.setFillViewport(true);
-    scroll.setVerticalScrollBarEnabled(false);
-    GradientDrawable bg =
-        new GradientDrawable(
-            GradientDrawable.Orientation.TL_BR, new int[] {0xfa20324c, 0xfa101a30});
-    bg.setCornerRadius(host.dp(22));
-    scroll.setBackground(bg);
-    body = host.vertical();
-    body.setPadding(host.dp(18), host.dp(20), host.dp(18), host.dp(24));
-    scroll.addView(body);
-    setContentView(scroll);
+    if (pageScroll == null) createPanel();
+    heading.removeAllViews();
+    body.removeAllViews();
+    currentTitle = "";
+    pageScroll.scrollTo(0, 0);
     first = null;
     PageState state = pages.peek();
     state.page.build(this);
-    View target = state.focusKey == null ? null : scroll.findViewWithTag(state.focusKey);
-    if (target == null || !target.isFocusable() || !target.isEnabled()) target = first;
-    if (target != null) target.requestFocus();
-    scroll.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-      @Override
-      public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
-        v.removeOnLayoutChangeListener(this);
-        if (pageScroll == scroll) scroll.scrollTo(0, state.scrollY);
-      }
-    });
+    View target = state.focusKey == null ? null : body.findViewWithTag(state.focusKey);
+    boolean restoreScroll = target != null && target.isFocusable() && target.isEnabled();
+    if (!restoreScroll) {
+      java.util.ArrayList<View> targets = body.getFocusables(View.FOCUS_FORWARD);
+      target = targets.isEmpty() ? first : targets.get(Math.min(state.focusIndex, targets.size() - 1));
+    }
+    if (target == null) return;
+    target.requestFocus();
+    if (restoreScroll) {
+      final View focused = target;
+      body.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+        @Override
+        public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+          v.removeOnLayoutChangeListener(this);
+          if (pages.peek() == state && focused.isFocused()) pageScroll.scrollTo(0, state.scrollY);
+        }
+      });
+    }
+  }
+
+  private void createPanel() {
+    LinearLayout panel = host.vertical();
+    panel.setBackground(NovaUi.surface(host));
+    heading = host.vertical();
+    heading.setPadding(host.dp(20), host.dp(20), host.dp(20), host.dp(10));
+    panel.addView(heading, host.lp(-1, -2));
+    pageScroll = new ScrollView(host);
+    pageScroll.setFillViewport(true);
+    pageScroll.setVerticalScrollBarEnabled(false);
+    body = host.vertical();
+    body.setPadding(host.dp(14), 0, host.dp(14), host.dp(18));
+    pageScroll.addView(body);
+    panel.addView(pageScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    setContentView(panel);
   }
 
   void title(String icon, String title, String subtitle) {
     currentTitle = title;
-    TextView heading = host.label(title, 24, 0xfff4fdff);
-    heading.setTypeface(null, android.graphics.Typeface.BOLD);
-    body.addView(heading);
+    if (pages.size() > 1) heading.addView(host.label("Настройки", 13, accent));
+    LinearLayout titleRow = host.horizontal();
+    titleRow.setGravity(Gravity.CENTER_VERTICAL);
+    titleRow.addView(badge(icon), host.lp(32, 32));
+    TextView caption = host.label(title, 24, NovaUi.TEXT);
+    caption.setTypeface(null, android.graphics.Typeface.BOLD);
+    caption.setPadding(host.dp(8), 0, 0, 0);
+    titleRow.addView(caption);
+    heading.addView(titleRow);
     if (!subtitle.isEmpty()) {
-      TextView text = host.label(subtitle, 13, 0xffbdc6dc);
-      text.setPadding(0, host.dp(8), 0, host.dp(16));
-      body.addView(text);
+      TextView text = host.label(subtitle, 13, NovaUi.SECONDARY);
+      text.setPadding(0, host.dp(6), 0, 0);
+      heading.addView(text);
     }
     host.gap(body, 12);
   }
@@ -139,15 +166,11 @@ final class TvSettingsPanel extends Dialog {
     row.setTag("setting:" + title);
     row.setPadding(host.dp(12), host.dp(9), host.dp(12), host.dp(9));
     row.setMinimumHeight(host.dp(52));
+    row.setGravity(Gravity.CENTER_VERTICAL);
     row.setFocusable(true);
     row.setFocusableInTouchMode(true);
-    row.setBackground(host.shape(0x00212a40, 26));
-    ImageView badge = new ImageView(host);
-    badge.setImageResource(iconFor(icon));
-    badge.setColorFilter(accent);
-    badge.setPadding(host.dp(7), host.dp(7), host.dp(7), host.dp(7));
-    badge.setBackground(host.shape((accent & 0x00ffffff) | 0x22000000, 18));
-    row.addView(badge, host.lp(32, 36));
+    row.setBackground(NovaUi.interaction(host, accent));
+    row.addView(badge(icon), host.lp(32, 32));
     LinearLayout labels = host.vertical();
     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -2, 1);
     params.leftMargin = host.dp(10);
@@ -158,12 +181,6 @@ final class TvSettingsPanel extends Dialog {
       TextView hint = host.label(subtitle, 12, 0xffb9c2d7);
       labels.addView(hint);
     }
-    row.setOnFocusChangeListener(
-        (v, focus) -> {
-          GradientDrawable background = host.shape(focus ? 0xff2a4462 : 0x00212a40, 16);
-          if (focus) background.setStroke(host.dp(2), accent);
-          row.setBackground(background);
-        });
     LinearLayout.LayoutParams rp = host.lp(-1, -2);
     rp.bottomMargin = host.dp(4);
     body.addView(row, rp);
@@ -171,16 +188,63 @@ final class TvSettingsPanel extends Dialog {
     return row;
   }
 
+  private ImageView badge(String icon) {
+    ImageView badge = new ImageView(host);
+    badge.setImageResource(iconFor(icon));
+    badge.setColorFilter(accent);
+    badge.setPadding(host.dp(6), host.dp(6), host.dp(6), host.dp(6));
+    badge.setBackground(host.shape((accent & 0x00ffffff) | 0x22000000, 9));
+    return badge;
+  }
+
   private int iconFor(String icon) {
     switch (icon) {
       case "♧": return R.drawable.nova_bell;
-      case "◷":
-      case "☾": return R.drawable.nova_clock;
+      case "◷": return R.drawable.nova_clock;
+      case "☾": return R.drawable.nova_ui_moon;
       case "☁": return R.drawable.nova_weather;
       case "▦":
-      case "▣": return R.drawable.nova_apps;
+      case "☷": return R.drawable.nova_apps;
+      case "▣":
+      case "▭": return R.drawable.nova_ui_card;
       case "◉": return R.drawable.nova_wifi;
-      default: return R.drawable.nova_menu;
+      case "⚙": return R.drawable.nova_ui_settings;
+      case "⌂": return R.drawable.nova_ui_home;
+      case "≡": return R.drawable.nova_ui_rows;
+      case "━": return R.drawable.nova_ui_panel;
+      case "▧": return R.drawable.nova_ui_photo;
+      case "◐": return R.drawable.nova_ui_palette;
+      case "◯": return R.drawable.nova_ui_drop;
+      case "▤": return R.drawable.nova_ui_tv;
+      case "◎": return R.drawable.nova_ui_pulse;
+      case "▯": return R.drawable.nova_ui_phone;
+      case "eye": return R.drawable.nova_ui_eye;
+      case "eye_off": return R.drawable.nova_ui_eye_off;
+      case "folder": return R.drawable.nova_ui_folder;
+      case "layers": return R.drawable.nova_ui_layers;
+      case "⇥": return R.drawable.nova_ui_input;
+      case "⌁": return R.drawable.nova_ui_remote;
+      case "shield": return R.drawable.nova_ui_shield;
+      case "♿": return R.drawable.nova_ui_access;
+      case "↺":
+      case "↻": return R.drawable.nova_ui_reset;
+      case "▷": return R.drawable.nova_ui_play;
+      case "calendar": return R.drawable.nova_ui_calendar;
+      case "ruler": return R.drawable.nova_ui_ruler;
+      case "T": return R.drawable.nova_ui_type;
+      case "☀": return R.drawable.nova_ui_sun;
+      case "!": return R.drawable.nova_ui_info;
+      case "⌖": return R.drawable.nova_ui_pin;
+      case "☆":
+      case "✦": return R.drawable.nova_ui_star;
+      case "+": return R.drawable.nova_ui_plus;
+      case "↔": return R.drawable.nova_ui_horizontal;
+      case "↕": return R.drawable.nova_ui_vertical;
+      case "←": return R.drawable.nova_ui_left;
+      case "→": return R.drawable.nova_ui_right;
+      case "↑": return R.drawable.nova_ui_up;
+      case "⏻": return R.drawable.nova_ui_power;
+      default: return R.drawable.nova_ui_more;
     }
   }
 
@@ -191,8 +255,10 @@ final class TvSettingsPanel extends Dialog {
   void action(String key, String icon, String title, String subtitle, Runnable action) {
     LinearLayout row = row(icon, title, subtitle);
     row.setTag(key);
-    TextView arrow = host.label("›", 24, accent);
-    row.addView(arrow);
+    ImageView arrow = new ImageView(host);
+    arrow.setImageResource(R.drawable.nova_ui_chevron);
+    arrow.setColorFilter(accent);
+    row.addView(arrow, host.lp(20, 20));
     row.setOnClickListener(v -> action.run());
   }
 
@@ -209,12 +275,14 @@ final class TvSettingsPanel extends Dialog {
   }
 
   void app(
+      String key,
       String title,
       String subtitle,
       android.graphics.drawable.Drawable icon,
       Runnable click,
       Runnable longClick) {
     LinearLayout row = row("", title, subtitle);
+    row.setTag(key);
     replaceBadge(row, icon);
     row.setOnClickListener(v -> click.run());
     row.setOnLongClickListener(
@@ -269,8 +337,13 @@ final class TvSettingsPanel extends Dialog {
       String icon, String title, int min, int max, int value, String suffix, IntConsumer changed) {
     LinearLayout container = host.vertical();
     container.setPadding(host.dp(12), host.dp(8), host.dp(12), host.dp(8));
-    TextView text = host.label(icon + "  " + title + " · " + value + suffix, 15, 0xffedf2ff);
-    container.addView(text);
+    LinearLayout labelRow = host.horizontal();
+    labelRow.setGravity(Gravity.CENTER_VERTICAL);
+    labelRow.addView(badge(icon), host.lp(28, 28));
+    TextView text = host.label(title + " · " + value + suffix, 15, NovaUi.TEXT);
+    text.setPadding(host.dp(8), 0, 0, 0);
+    labelRow.addView(text);
+    container.addView(labelRow);
     SeekBar seek = new SeekBar(host);
     seek.setTag("slider:" + title);
     seek.setFocusable(true);
@@ -280,8 +353,9 @@ final class TvSettingsPanel extends Dialog {
     seek.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
     seek.setThumbTintList(android.content.res.ColorStateList.valueOf(accent));
     container.addView(seek, host.lp(-1, 34));
-    seek.setOnFocusChangeListener(
-        (v, focus) -> container.setBackground(host.shape(focus ? 0x667e91b6 : 0x00212a40, 22)));
+    container.setAddStatesFromChildren(true);
+    container.setBackground(NovaUi.interaction(host, accent));
+    seek.setContentDescription(title);
     seek.setOnKeyListener(
         (v, key, event) -> {
           if (key != KeyEvent.KEYCODE_DPAD_LEFT && key != KeyEvent.KEYCODE_DPAD_RIGHT) return false;
@@ -298,7 +372,7 @@ final class TvSettingsPanel extends Dialog {
         new SeekBar.OnSeekBarChangeListener() {
           public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
             int actual = progress + min;
-            text.setText(icon + "  " + title + " · " + actual + suffix);
+            text.setText(title + " · " + actual + suffix);
             changed.accept(actual);
           }
 

@@ -410,7 +410,7 @@ public class MainActivity extends Activity {
     menu = horizontal();
     bar.addView(menu);
     nav("Приложения", R.drawable.nova_apps, this::openLibrary);
-    nav("Меню", R.drawable.nova_menu, this::settings);
+    nav("Настройки", R.drawable.nova_ui_settings, this::settings);
     notificationCounter = null;
     StatusBarView status = new StatusBarView(this);
     statusBar = status;
@@ -917,10 +917,15 @@ public class MainActivity extends Activity {
       "Категория",
       readIds("hidden").contains(a.pkg) ? "Показать приложение" : "Скрыть приложение"
     };
+    int[] icons = {
+      R.drawable.nova_ui_star, R.drawable.nova_ui_horizontal, R.drawable.nova_ui_settings,
+      R.drawable.nova_ui_info, R.drawable.nova_ui_trash, R.drawable.nova_ui_folder,
+      readIds("hidden").contains(a.pkg) ? R.drawable.nova_ui_eye : R.drawable.nova_ui_eye_off
+    };
     new NovaDialog(this)
         .setTitle(a.label)
-        .setItems(
-            items,
+        .setAdapter(
+            new NovaDialog.IconOptions(this, items, icons),
             (d, n) -> {
               switch (n) {
                 case 0:
@@ -1265,67 +1270,99 @@ public class MainActivity extends Activity {
   }
 
   void rootSettings(TvSettingsPanel p) {
-    p.title("✦", "Nova home Launcher", "Настройки домашнего экрана");
-    p.section("ПРИЛОЖЕНИЯ");
-    p.action("▦", "Все приложения", "ТВ и мобильные приложения", this::openLibrary);
-    p.action("≡", "Изменить категории", "Создание, порядок, видимость", this::manageCategories);
-    p.action(
-        "▤",
-        "Изменить каналы",
-        "Рекомендации установленных приложений",
-        () -> p.open(this::channelsSettings));
-    p.section("НАСТРОЙКИ");
-    p.action(
-        "⚙",
-        "Настройки Nova home Launcher",
-        "Оформление, поведение, система",
+    p.title("⚙", "Настройки", "Nova home Launcher");
+    p.action("root.home", "⌂", "Главный экран", "Ряды, карточки и отступы",
+        () -> p.open(this::homeSettings));
+    p.action("root.status", "━", "Верхняя панель", "Часы, погода, сеть и уведомления",
+        () -> p.open(this::statusSettings));
+    p.action("root.wallpaper", "▧", "Обои", "Изображения, видео и встроенные темы",
+        () -> p.open(this::wallpaperSettings));
+    p.action("root.power", "☾", "Заставка и сон", "Экран и заставка Android",
+        () -> p.open(this::powerSettings));
+    p.action("root.apps", "▦", "Приложения и рекомендации", "Приложения, категории и каналы",
+        () -> p.open(this::appsSettings));
+    p.action("root.appearance", "◐", "Оформление интерфейса", "Шрифт, цвет и профили",
+        () -> p.open(this::interfaceSettings));
+    p.action("root.device", "▤", "Устройство", "Сеть, пульт и системные функции",
         () -> p.open(this::mainSettings));
+    p.action("root.diagnostics", "◎", "Диагностика", "Устройство, погода и каналы",
+        () -> p.open(this::diagnosticSettings));
+  }
+
+  private void homeSettings(TvSettingsPanel p) {
+    p.title("⌂", "Главный экран", "Изменения видны в предпросмотре");
+    p.action("home.rows", "≡", "Ряды", "Порядок, заголовки и видимость",
+        () -> p.open(this::rowsSettings));
+    p.action("appearance.cards", "▭", "Карточки", "Размер, пропорции и фокус",
+        () -> p.open(this::cardsSettings));
+    p.action("home.spacing", "ruler", "Поля и интервалы", "",
+        () -> p.open(this::spacingSettings));
+  }
+
+  private void appsSettings(TvSettingsPanel p) {
+    p.title("▦", "Приложения и рекомендации", "");
+    p.action("apps.library", "▦", "Все приложения", "ТВ и мобильные приложения", this::openLibrary);
+    p.action("apps.hidden", "eye_off", "Скрытые приложения", "", () -> openAppList(true));
+    p.action("apps.categories", "folder", "Категории", "Создание, порядок и видимость",
+        this::manageCategories);
+    p.action("apps.channels", "▤", "Каналы приложений", "Рекомендации установленных приложений",
+        () -> p.open(this::channelsSettings));
+    p.action("apps.refresh", "↻", "Обновить приложения", "", this::refreshAppList);
+  }
+
+  private void interfaceSettings(TvSettingsPanel p) {
+    p.title("◐", "Оформление интерфейса", "");
+    p.action("interface.font", "T", "Шрифт", "Размер интерфейса и диалогов", this::fontSettings);
+    p.action("interface.accent", "◐", "Цвет акцента", "Выделение карточек и меню",
+        () -> chooseColor("accent_color", true));
+    p.action("interface.profiles", "layers", "Профили экрана", "Сохранение и восстановление оформления",
+        () -> p.open(this::profileSettings));
+    p.action("interface.reset", "↺", "Сбросить оформление", "Приложения и избранное сохранятся",
+        this::resetAppearance);
+  }
+
+  private void diagnosticSettings(TvSettingsPanel p) {
+    p.title("◎", "Диагностика", "");
+    p.action("diagnostics.device", "!", "О приложении и устройстве", "Версия, память и экран",
+        this::diagnostics);
+    p.action("diagnostics.weather", "☁", "Погода", "Проверка соединения и последняя ошибка",
+        () -> p.open(this::weatherSettings));
+    p.action("diagnostics.channels", "▤", "Каналы приложений", "Разрешения и данные",
+        () -> p.open(this::channelsSettings));
+    p.action("diagnostics.notifications", "♧", "Уведомления", "Доступ и активные медиасессии",
+        () -> p.open(this::notificationSettings));
+  }
+
+  private void refreshAppList() {
+    refreshApps();
+    render();
+  }
+
+  private void mainSettings(TvSettingsPanel p) {
+    p.title("▤", "Устройство", "");
+    p.action("device.autostart", "▷", "Автозапуск приложения", "", this::autostartSettings);
+    systemSetting(p, "◉", "Сеть", "", android.provider.Settings.ACTION_WIFI_SETTINGS);
+    systemSetting(p, "calendar", "Дата и время Android", "", android.provider.Settings.ACTION_DATE_SETTINGS);
+    systemSetting(p, "◉", "Голосовой поиск", "Системный поиск, если установлен",
+        android.app.SearchManager.INTENT_ACTION_GLOBAL_SEARCH);
+    if (availableTvInputs().isEmpty())
+      p.unavailable("⇥", "Источники сигнала", "Нет доступных входов телевизора");
+    else p.action("device.inputs", "⇥", "Источники сигнала", "Входы телевизора", this::showInputs);
+    systemSetting(p, "⌁", "Пульты и устройства", "Системное сопряжение Bluetooth",
+        android.provider.Settings.ACTION_BLUETOOTH_SETTINGS);
+    p.action("device.parental", "shield", "Родительский контроль", "PIN для настроек и приложений",
+        () -> p.open(this::parentalSettings));
+    systemSetting(p, "♿", "Специальные возможности", "Системные настройки доступности",
+        android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
     systemSetting(p,
-        "⌂",
+        "⚙",
         "Настройки Android",
         "Штатные настройки телевизора",
         android.provider.Settings.ACTION_SETTINGS);
-    p.action(
-        "▣",
-        "Профили экрана",
-        "Сохранение и восстановление оформления",
-        () -> p.open(this::profileSettings));
-  }
-
-  void mainSettings(TvSettingsPanel p) {
-    p.title("⚙", "Настройки Nova home Launcher", "");
-    p.action("☷", "Основные", "Автозапуск, приложения", () -> p.open(this::generalSettings));
-    p.action(
-        "▣",
-        "Внешний вид",
-        "Карточки, категории, часы и обои",
-        () -> p.open(this::appearanceSettings));
-    systemSetting(p,
-        "☾",
-        "Режим простоя",
-        "Заставка Android",
-        android.provider.Settings.ACTION_DREAM_SETTINGS);
-    if (availableTvInputs().isEmpty())
-      p.unavailable("⇥", "Источник сигнала", "Нет доступных входов телевизора");
-    else p.action("⇥", "Источник сигнала", "Входы телевизора", this::showInputs);
-    systemSetting(p, "⌁", "Пульты и устройства", "Системное сопряжение Bluetooth",
-        android.provider.Settings.ACTION_BLUETOOTH_SETTINGS);
-    p.action("⏻", "Электропитание", "Экран и заставка Android", () -> p.open(this::powerSettings));
-    p.action(
-        "♧", "Родительский контроль", "PIN настроек и запуска в Nova home Launcher",
-        () -> p.open(this::parentalSettings));
-    systemSetting(p,
-        "♿",
-        "Специальные возможности",
-        "Системные настройки доступности",
-        android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
-    p.action("◎", "Диагностика", "Устройство, память и погода", this::diagnostics);
-    p.action(
-        "↺", "Сбросить оформление", "Приложения и избранное сохранятся", this::resetAppearance);
   }
 
   void powerSettings(TvSettingsPanel p) {
-    p.title("⏻", "Электропитание", "Nova home Launcher не меняет системные правила выключения");
+    p.title("☾", "Заставка и сон", "Управление экраном и системной заставкой");
     toggle(p, "☀", "Не гасить экран в Nova home Launcher", "keep_screen_on", false);
     systemSetting(p, "☾", "Заставка Android", "",
         android.provider.Settings.ACTION_DREAM_SETTINGS);
@@ -1535,21 +1572,8 @@ public class MainActivity extends Activity {
     dialog.show();
   }
 
-  void appearanceSettings(TvSettingsPanel p) {
-    p.title("▣", "Внешний вид", "Изменения видны слева сразу");
-    p.action(
-        "≡", "Категории / строки", "Заголовки, интервалы, поля", () -> p.open(this::rowsSettings));
-    p.action("appearance.cards", "▭", "Карточки", "Размер, пропорции и фокус",
-        () -> p.open(this::cardsSettings));
-    p.action("▧", "Обои", "Фон, затемнение, темы", () -> p.open(this::wallpaperSettings));
-    p.action("━", "Строка состояния", "Часы, погода, сеть", () -> p.open(this::statusSettings));
-    p.action("T", "Шрифт", "Размер интерфейса и диалогов", this::fontSettings);
-    p.action(
-        "◐", "Цвет акцента", "Выделение карточек и меню", () -> chooseColor("accent_color", true));
-  }
-
   void rowsSettings(TvSettingsPanel p) {
-    p.title("≡", "Категории / строки", "");
+    p.title("≡", "Ряды", "");
     p.action("rows.preview_all", "▣", "Показать весь экран", "", () -> {
       previewRow = null;
       launcherScroll.smoothScrollTo(0, 0);
@@ -1559,14 +1583,19 @@ public class MainActivity extends Activity {
     toggle(p, "☆", "Избранное", "show_favorites", true);
     toggle(p, "▦", "ТВ приложения", "show_all", true);
     toggle(p, "▯", "Мобильные приложения", "show_mobile", true);
-    slider(p, "↕", "Вертикальный интервал", "row_gap", 12, 0, 48, " dp");
     toggle(p, "⌖", "Запоминать карточку", "remember_focus", true);
     toggle(p, "⌖", "Закреплять выбранную строку", "pin_row", false);
     slider(p, "◐", "Непрозрачность неактивных строк", "inactive_opacity", 75, 20, 100, " %");
+    p.action("rows.categories", "folder", "Управление категориями", "", this::manageCategories);
+  }
+
+  private void spacingSettings(TvSettingsPanel p) {
+    p.title("ruler", "Поля и интервалы", "");
     slider(p, "↑", "Верхний отступ", "margin_top", 20, 0, 100, " dp");
     slider(p, "←", "Отступ слева", "margin_left", 28, 0, 100, " dp");
     slider(p, "→", "Отступ справа", "margin_right", 28, 0, 100, " dp");
-    p.action("≡", "Управление категориями", "", this::manageCategories);
+    slider(p, "↕", "Интервал между рядами", "row_gap", 12, 0, 48, " dp");
+    slider(p, "↔", "Расстояние между карточками", "card_gap", 10, 2, 32, " dp");
   }
 
   void cardsSettings(TvSettingsPanel p) {
@@ -1576,7 +1605,6 @@ public class MainActivity extends Activity {
     slider(p, "▦", "Строк приложений в категории", "grid_rows", 3, 1, 3, "");
     slider(p, "▭", "Размер карточки", "card_width", 126, 80, 240, " dp");
     slider(p, "◯", "Радиус скругления", "card_radius", 10, 0, 28, " dp");
-    slider(p, "↔", "Расстояние между карточками", "card_gap", 10, 2, 32, " dp");
     slider(p, "▣", "Размер значков без баннера", "icon_size", 44, 24, 80, " dp");
     p.section("МОБИЛЬНЫЕ КАРТОЧКИ");
     p.action("▣", "Режим изображения", "", () -> chooseSetting(
@@ -1662,7 +1690,13 @@ public class MainActivity extends Activity {
   }
 
   void statusSettings(TvSettingsPanel p) {
-    p.title("━", "Строка состояния", "");
+    p.title("━", "Верхняя панель", "");
+    p.action("status.content", "eye", "Что показывать", "", () -> p.open(this::statusContent));
+    p.action("status.style", "◐", "Оформление панели", "", () -> p.open(this::statusStyle));
+  }
+
+  private void statusStyle(TvSettingsPanel p) {
+    p.title("◐", "Оформление панели", "");
     toggle(p, "━", "Показывать строку состояния", "show_status", true);
     p.action("▣", "Значки и текст", "", () -> chooseSetting("status_label_mode", "Значки и текст",
         new String[] {"Только значки", "Только текст", "Значки и текст"}, 2));
@@ -1678,6 +1712,10 @@ public class MainActivity extends Activity {
     p.action("◐", "Цвет фона", "", () -> chooseColor("status_background", false));
     p.action("↔", "Расположение", "", () -> chooseSetting("status_alignment", "Расположение",
         new String[] {"Перед кнопками", "После кнопок"}, 1));
+  }
+
+  private void statusContent(TvSettingsPanel p) {
+    p.title("eye", "Что показывать", "");
     p.action("◷", "Часы", "Размер, цвет, формат", () -> p.open(this::clockSettings));
     p.action("☁", "Погода", "Город, размер, цвет", () -> p.open(this::weatherSettings));
     toggle(p, "◉", "Показывать подключение", "show_network", true);
@@ -1782,35 +1820,6 @@ public class MainActivity extends Activity {
     });
   }
 
-  void generalSettings(TvSettingsPanel p) {
-    p.title("☷", "Основные", "Google TV и системный HOME не изменяются");
-    p.action("▷", "Автозапуск приложения", "При старте Nova home Launcher", this::autostartSettings);
-    p.action("◉", "Скрытые приложения", "Восстановление скрытых карточек", () -> openAppList(true));
-    p.action(
-        "↻",
-        "Обновить приложения",
-        "",
-        () -> {
-          refreshApps();
-          render();
-        });
-    systemSetting(p,
-        "◉",
-        "Сеть",
-        "",
-        android.provider.Settings.ACTION_WIFI_SETTINGS);
-    systemSetting(p,
-        "◷",
-        "Дата и время",
-        "",
-        android.provider.Settings.ACTION_DATE_SETTINGS);
-    systemSetting(p,
-        "⌁",
-        "Голосовой поиск",
-        "Системный поиск, если установлен",
-        android.app.SearchManager.INTENT_ACTION_GLOBAL_SEARCH);
-  }
-
   void chooseColor(String key, boolean reopen) {
     String[] names = {"Розовый", "Бирюзовый", "Голубой", "Белый", "Тёмный"};
     int[] colors = {0xffff94b2, 0xff8de7d3, 0xff9ecaff, 0xfff5f7ff, 0xdd222c40};
@@ -1862,8 +1871,10 @@ public class MainActivity extends Activity {
               hiddenOnly ? "◉" : "▦",
               hiddenOnly ? "Скрытые приложения" : "Все приложения",
               "OK — запуск · удержание OK — меню");
-          for (App app : visibleApps(installed, hiddenOnly)) {
+          List<App> apps = visibleApps(installed, hiddenOnly);
+          for (App app : apps) {
             p.app(
+                "app:" + app.pkg,
                 app.label,
                 app.tv ? "ТВ приложение" : "Мобильное приложение",
                 app.banner == null ? app.icon : app.banner,
@@ -1881,7 +1892,7 @@ public class MainActivity extends Activity {
                   contextMenu(app, false, "app_order");
                 });
           }
-          if (visibleApps(installed, hiddenOnly).isEmpty()) p.section("Приложений нет");
+          if (apps.isEmpty()) p.section("Приложений нет");
         });
   }
 

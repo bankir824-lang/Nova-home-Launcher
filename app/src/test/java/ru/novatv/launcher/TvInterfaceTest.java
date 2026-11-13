@@ -43,13 +43,19 @@ public class TvInterfaceTest {
   @Test
   public void backReturnsFocusToCardsSetting() {
     MainActivity activity = create();
-    activity.openPanelPage(activity::appearanceSettings);
+    activity.settings();
     TvSettingsPanel panel = (TvSettingsPanel) ShadowDialog.getLatestDialog();
+    View root = panel.findViewById(android.R.id.content);
+    View home = root.findViewWithTag("root.home");
+    assertTrue(home.performClick());
     View cards = panel.getWindow().getDecorView().findViewWithTag("appearance.cards");
     assertTrue(cards.requestFocus());
     assertTrue(cards.performClick());
     panel.onBackPressed();
     assertEquals("appearance.cards", panel.getCurrentFocus().getTag());
+    panel.onBackPressed();
+    assertEquals("root.home", panel.getCurrentFocus().getTag());
+    assertSame(root, panel.findViewById(android.R.id.content));
     panel.dismiss();
     activity.finish();
   }
