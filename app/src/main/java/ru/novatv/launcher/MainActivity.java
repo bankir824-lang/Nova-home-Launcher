@@ -43,6 +43,9 @@ public class MainActivity extends Activity {
   private int activeRows;
   private final List<View> appRows = new ArrayList<>();
   private TvFeeds.Result feeds;
+  private static final String TV_LISTINGS = "android.permission.READ_TV_LISTINGS";
+  private static final int REQUEST_TV_LISTINGS = 3201;
+  private boolean lastTvListingsGrant;
   private boolean feedsLoading;
   private long feedsLoaded;
   private final java.util.concurrent.ExecutorService artworkWorker =
@@ -64,6 +67,10 @@ public class MainActivity extends Activity {
   private boolean movingFavorites;
   private TextView weather;
   private final WeatherRequests weatherRequests = new WeatherRequests();
+  private final java.util.concurrent.ExecutorService weatherWorker =
+      java.util.concurrent.Executors.newFixedThreadPool(2);
+  private java.util.concurrent.Future<?> weatherTask;
+  private long retryWeatherAfter;
   private boolean showHidden;
   private String movingRowKey;
   private String returnFocusTag;
@@ -479,6 +486,7 @@ public class MainActivity extends Activity {
     releaseWallpaper();
     authWorker.shutdownNow();
     worker.shutdownNow();
+    weatherWorker.shutdownNow();
     artworkWorker.shutdownNow();
     artworkCache.evictAll();
     unregisterReceiver(packages);
@@ -489,6 +497,13 @@ public class MainActivity extends Activity {
   protected void onResume() {
     super.onResume();
     resumed = true;
+    boolean tvListingsGranted = hasTvListingsAccess();
+    if (tvListingsGranted != lastTvListingsGrant) {
+      lastTvListingsGrant = tvListingsGranted;
+      feedsLoaded = 0;
+      feeds = null;
+      loadChannels();
+    }
     if (currentWallpaper instanceof AnimatedImageDrawable)
       ((AnimatedImageDrawable) currentWallpaper).start();
     if (wallpaperPlayer != null)
@@ -1724,10 +1739,8 @@ public class MainActivity extends Activity {
         "↻",
         "Обновить",
         "",
-        () -> {
-          getPreferences(0).edit().putLong("weather_time", 0).apply();
-          loadWeather();
-        });
+        this::refreshWeather);
+    p.action("weather.connection", "↻", "Проверить соединение", "", this::checkWeatherConnection);
     p.action(
         "!",
         "Последняя ошибка",
@@ -1736,11 +1749,35 @@ public class MainActivity extends Activity {
             new NovaDialog(this)
                 .setTitle("Диагностика погоды")
                 .setMessage(
-                    getPreferences(0).getString("weather_error", "Ошибок нет")
+                    getPreferences(0).getString("weather_diagnostics", "Запросы ещё не выполнялись")
                         + "\nВремя ТВ: "
                         + new Date())
                 .setPositiveButton("Закрыть", null)
                 .show());
+  }
+
+  private void refreshWeather() {
+    retryWeatherAfter = 0;
+    getPreferences(0).edit().putLong("weather_time", 0).apply();
+    loadWeather();
+  }
+
+  private void checkWeatherConnection() {
+    AlertDialog diagnostic = new NovaDialog(this).setTitle("Проверка погоды")
+        .setMessage("Проверяем доступность погодных сервисов…")
+        .setPositiveButton("Закрыть", null).show();
+    weatherWorker.execute(() -> {
+      String result;
+      try {
+        result = weatherRepository().forecast("55.75", "37.62").diagnostics;
+      } catch (java.io.IOException failure) {
+        result = WeatherRepository.describe(failure);
+      }
+      String report = result;
+      handler.post(() -> {
+        if (!isDestroyed() && diagnostic.isShowing()) diagnostic.setMessage(report);
+      });
+    });
   }
 
   void generalSettings(TvSettingsPanel p) {
@@ -2141,27 +2178,67 @@ public class MainActivity extends Activity {
   void loadChannels() {
     if (feedsLoading) return;
     feedsLoading = true;
+    boolean readPreview = hasTvListingsAccess();
     worker.execute(
         () -> {
-          TvFeeds.Result result = TvFeeds.read(this);
+          TvFeeds.Result result = TvFeeds.read(this, readPreview);
           handler.post(
               () -> {
                 feedsLoading = false;
                 if (isDestroyed()) return;
+                if (readPreview != hasTvListingsAccess()) {
+                  loadChannels();
+                  return;
+                }
                 feeds = result;
                 failedArtwork.clear();
                 feedsLoaded = System.currentTimeMillis();
                 if (settingsPanel != null
                     && settingsPanel.isShowing()
                     && settingsPanel.isPage("Каналы приложений")) settingsPanel.refresh();
-                if (currentScreen == 0) home();
+                if (currentScreen == 0) rebuildPreviewRows();
               });
         });
+  }
+
+  private boolean hasTvListingsAccess() {
+    return checkSelfPermission(TV_LISTINGS) == PackageManager.PERMISSION_GRANTED;
+  }
+
+  private void openTvListingsPermission() {
+    boolean asked = getPreferences(0).getBoolean("tv_listings_permission_asked", false);
+    if (asked && !shouldShowRequestPermissionRationale(TV_LISTINGS)) {
+      safeStart(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+          android.net.Uri.fromParts("package", getPackageName(), null)));
+      return;
+    }
+    getPreferences(0).edit().putBoolean("tv_listings_permission_asked", true).apply();
+    requestPermissions(new String[] {TV_LISTINGS}, REQUEST_TV_LISTINGS);
+  }
+
+  @Override
+  public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+    super.onRequestPermissionsResult(request, permissions, results);
+    if (request != REQUEST_TV_LISTINGS) return;
+    lastTvListingsGrant = hasTvListingsAccess();
+    feeds = null;
+    feedsLoaded = 0;
+    if (settingsPanel != null && settingsPanel.isShowing()
+        && settingsPanel.isPage("Каналы приложений")) settingsPanel.refresh();
+    loadChannels();
   }
 
   void channelsSettings(TvSettingsPanel p) {
     p.title("▤", "Каналы приложений", "Данные системного TV Provider");
     toggle(p, "▤", "Показывать рекомендации", "show_channels", false);
+    if (!hasTvListingsAccess()) {
+      boolean settingsRequired = getPreferences(0).getBoolean("tv_listings_permission_asked", false)
+          && !shouldShowRequestPermissionRationale(TV_LISTINGS);
+      p.action("tv_feeds.permission", "⚙",
+          settingsRequired ? "Открыть разрешения приложения" : "Разрешить чтение каналов",
+          "Доступ нужен для рекомендаций кинотеатров. «Смотреть далее» проверяется отдельно.",
+          this::openTvListingsPermission);
+    }
     p.action(
         "↻",
         "Обновить каналы",
@@ -2175,13 +2252,19 @@ public class MainActivity extends Activity {
       loadChannels();
       return;
     }
-    if (!feeds.message.isEmpty()) p.section(feeds.message);
-    for (TvFeeds.Channel channel : feeds.channels) {
+    TvFeeds.Result displayed = feeds;
+    if (!displayed.message.isEmpty()) p.section(displayed.message);
+    p.action("tv_feeds.diagnostics", "◎", "Диагностика каналов", "",
+        () -> new NovaDialog(this).setTitle("Диагностика каналов")
+            .setMessage((hasTvListingsAccess() ? "Доступ выдан" : "Доступ не выдан")
+                + "\n" + displayed.diagnostics())
+            .setPositiveButton("Закрыть", null).show());
+    for (TvFeeds.Channel channel : displayed.channels) {
       boolean shown = !readIds("hidden_channels").contains(channel.id);
       p.toggle(
           "▤",
           channel.title,
-          channel.pkg + " · " + channel.programs.size() + " карточек",
+          channel.source + " · " + channel.programs.size() + " карточек",
           shown,
           value -> {
             List<String> hidden = readIds("hidden_channels");
@@ -2765,11 +2848,11 @@ public class MainActivity extends Activity {
                     }
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
                     dialog.setMessage("Ищем город…");
-                    worker.execute(
+                    weatherWorker.execute(
                         () -> {
                           try {
                             org.json.JSONArray places =
-                                json("https://geocoding-api.open-meteo.com/v1/search?count=8&language=ru&name="
+                                weatherRepository().json("https://geocoding-api.open-meteo.com/v1/search?count=8&language=ru&name="
                                         + java.net.URLEncoder.encode(query, "UTF-8"))
                                     .optJSONArray("results");
                             handler.post(
@@ -2798,7 +2881,9 @@ public class MainActivity extends Activity {
                                           labels,
                                           (d2, n) -> {
                                             org.json.JSONObject place = places.optJSONObject(n);
+                                            if (weatherTask != null) weatherTask.cancel(true);
                                             weatherRequests.invalidate();
+                                            retryWeatherAfter = 0;
                                             getPreferences(0)
                                                 .edit()
                                                 .putString("weather_city", place.optString("name"))
@@ -2821,8 +2906,7 @@ public class MainActivity extends Activity {
                                   if (!isDestroyed() && dialog.isShowing()) {
                                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                                     dialog.setMessage(
-                                        "Не удалось найти город. Проверьте интернет и повторите"
-                                            + " поиск.");
+                                        "geocoding-api.open-meteo.com · " + WeatherRepository.describe(e));
                                   }
                                 });
                           }
@@ -2832,56 +2916,46 @@ public class MainActivity extends Activity {
     dialog.show();
   }
 
-  org.json.JSONObject json(String url) throws Exception {
-    java.net.HttpURLConnection c =
-        (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-    c.setConnectTimeout(10000);
-    c.setReadTimeout(12000);
-    c.setRequestProperty("Accept", "application/json");
-    c.setRequestProperty("User-Agent", "NovaTVLauncher/0.5 AndroidTV");
-    int status = c.getResponseCode();
-    if (status != 200) {
-      c.disconnect();
-      throw new java.io.IOException("HTTP " + status);
+  private WeatherRepository weatherRepository() {
+    String version = "";
+    try {
+      version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+    } catch (PackageManager.NameNotFoundException ignored) {
+      // The package manager can be unavailable during shutdown.
     }
-    try (java.io.InputStream in = c.getInputStream();
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
-      byte[] bytes = new byte[4096];
-      int n;
-      while ((n = in.read(bytes)) != -1) {
-        out.write(bytes, 0, n);
-        if (out.size() > 1048576) throw new java.io.IOException("Ответ слишком большой");
-      }
-      return new org.json.JSONObject(out.toString("UTF-8"));
-    } finally {
-      c.disconnect();
-    }
-  }
-
-  String weatherFailure(Exception e) {
-    if (e instanceof org.json.JSONException) return "Некорректный ответ сервиса";
-    return WeatherErrors.describe(e);
+    return new WeatherRepository(version);
   }
 
   void loadWeather() {
+    if (SystemClock.elapsedRealtime() < retryWeatherAfter) return;
     String city = getPreferences(0).getString("weather_city", "");
     if (!weatherRequests.shouldLoad(
         city, System.currentTimeMillis(), getPreferences(0).getLong("weather_time", 0))) return;
     final int generation = weatherRequests.begin();
     final String latitude = getPreferences(0).getString("weather_lat", "");
     final String longitude = getPreferences(0).getString("weather_lon", "");
-    if (weather != null) weather.setText(city + ": загружаем погоду…");
-    worker.execute(
+    if (weather != null && !getPreferences(0).contains("weather_cache"))
+      weather.setText(city + ": загружаем погоду…");
+    android.net.ConnectivityManager connectivity =
+        (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+    android.net.NetworkCapabilities network = connectivity == null ? null
+        : connectivity.getNetworkCapabilities(connectivity.getActiveNetwork());
+    String connection = network == null ? "Нет активной сети"
+        : network.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            ? "Android подтвердил доступ в интернет" : "Android не подтвердил доступ в интернет";
+    weatherTask = weatherWorker.submit(
         () -> {
           String result;
           boolean ok = false;
           String weatherError = "";
+          String weatherDiagnostics = connection;
           try {
+            if (network == null) throw new java.io.IOException(connection);
             String lat = latitude;
             String lon = longitude;
             if (lat.isEmpty() || lon.isEmpty()) {
               org.json.JSONArray places =
-                  json("https://geocoding-api.open-meteo.com/v1/search?count=1&language=ru&name="
+                  weatherRepository().json("https://geocoding-api.open-meteo.com/v1/search?count=1&language=ru&name="
                           + java.net.URLEncoder.encode(city, "UTF-8"))
                       .optJSONArray("results");
               if (places == null || places.length() == 0)
@@ -2890,47 +2964,9 @@ public class MainActivity extends Activity {
               lat = place.getString("latitude");
               lon = place.getString("longitude");
             }
-            org.json.JSONObject current;
-            String provider = "Open-Meteo";
-            try {
-              current =
-                  json("https://api.open-meteo.com/v1/forecast?latitude="
-                          + lat
-                          + "&longitude="
-                          + lon
-                          + "&current=temperature_2m,weather_code")
-                      .getJSONObject("current");
-            } catch (Exception primary) {
-              try {
-                org.json.JSONObject legacy =
-                    json("https://api.open-meteo.com/v1/forecast?latitude="
-                            + lat
-                            + "&longitude="
-                            + lon
-                            + "&current_weather=true")
-                        .getJSONObject("current_weather");
-                current =
-                    new org.json.JSONObject()
-                        .put("temperature_2m", legacy.getDouble("temperature"))
-                        .put("weather_code", legacy.getInt("weathercode"));
-              } catch (Exception secondary) {
-                try {
-                  org.json.JSONObject backup =
-                      json("https://wttr.in/" + lat + "," + lon + "?format=j1")
-                          .getJSONArray("current_condition")
-                          .getJSONObject(0);
-                  current =
-                      new org.json.JSONObject()
-                          .put("temperature_2m", backup.getDouble("temp_C"))
-                          .put("weather_code", -1);
-                  provider = "wttr.in";
-                } catch (Exception fallback) {
-                  throw new java.io.IOException(
-                      weatherFailure(primary) + "; резерв: " + weatherFailure(fallback), primary);
-                }
-              }
-            }
-            int code = current.getInt("weather_code");
+            WeatherRepository.Forecast forecast = weatherRepository().forecast(lat, lon);
+            weatherDiagnostics += "\n" + forecast.diagnostics;
+            int code = forecast.weatherCode;
             String sky =
                 code < 0
                     ? ""
@@ -2946,30 +2982,33 @@ public class MainActivity extends Activity {
             result =
                 city
                     + ": "
-                    + Math.round(current.getDouble("temperature_2m"))
+                    + Math.round(forecast.temperature)
                     + " °C"
                     + (sky.isEmpty() ? "" : ", " + sky)
                     + " · "
-                    + provider
+                    + forecast.provider
                     + " · "
                     + new SimpleDateFormat("HH:mm", new Locale("ru")).format(new Date());
             ok = true;
           } catch (Exception e) {
-            weatherError = weatherFailure(e);
+            weatherError = WeatherRepository.describe(e);
+            weatherDiagnostics += "\n" + weatherError;
             result =
                 getPreferences(0).getString("weather_cache", city + ": погода недоступна")
-                    + " · "
-                    + weatherError;
+                    + (getPreferences(0).contains("weather_cache") ? " · данные устарели" : "");
           }
           final String text = result;
           final String error = weatherError;
+          final String diagnostics = weatherDiagnostics;
           final boolean success = ok;
           handler.post(
               () -> {
                 if (!weatherRequests.complete(generation)) return;
                 if (isDestroyed() || !city.equals(getPreferences(0).getString("weather_city", "")))
                   return;
-                getPreferences(0).edit().putString("weather_error", error).apply();
+                getPreferences(0).edit().putString("weather_error", error)
+                    .putString("weather_diagnostics", diagnostics).apply();
+                if (!success) retryWeatherAfter = SystemClock.elapsedRealtime() + 60_000L;
                 if (success)
                   getPreferences(0)
                       .edit()
@@ -2977,6 +3016,8 @@ public class MainActivity extends Activity {
                       .putLong("weather_time", System.currentTimeMillis())
                       .apply();
                 if (weather != null) weather.setText(text);
+                if (settingsPanel != null && settingsPanel.isShowing()
+                    && settingsPanel.isPage("Погода")) settingsPanel.refresh();
               });
         });
   }
