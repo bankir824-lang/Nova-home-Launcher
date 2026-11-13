@@ -22,6 +22,34 @@ import org.robolectric.shadows.ShadowDialog;
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class TvInterfaceTest {
   @Test
+  public void backReturnsFocusToCardsSetting() {
+    MainActivity activity = create();
+    activity.openPanelPage(activity::appearanceSettings);
+    TvSettingsPanel panel = (TvSettingsPanel) ShadowDialog.getLatestDialog();
+    View cards = panel.getWindow().getDecorView().findViewWithTag("appearance.cards");
+    assertTrue(cards.requestFocus());
+    assertTrue(cards.performClick());
+    panel.onBackPressed();
+    assertEquals("appearance.cards", panel.getCurrentFocus().getTag());
+    panel.dismiss();
+    activity.finish();
+  }
+
+  @Test
+  public void repeatedAppearanceChangesKeepTheSamePreviewRoot() {
+    MainActivity activity = create();
+    ViewGroup windowContent = activity.findViewById(android.R.id.content);
+    View preview = windowContent.getChildAt(0);
+    activity.settings();
+    for (int width = 128; width < 136; width++) activity.setInt("card_width", width);
+    shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(250));
+    assertSame(preview, windowContent.getChildAt(0));
+    assertEquals(135, activity.getPreferences(0).getInt("card_width", 0));
+    ((TvSettingsPanel) ShadowDialog.getLatestDialog()).dismiss();
+    activity.finish();
+  }
+
+  @Test
   public void novaTvHasSeparateEntryPointsForInstallerTvAndHome() {
     Context context = RuntimeEnvironment.getApplication();
     PackageManager packages = context.getPackageManager();

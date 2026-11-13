@@ -17,8 +17,18 @@ public class MainActivity extends Activity {
   private boolean resumed;
   private final Runnable redraw =
       () -> {
-        if (!isDestroyed()) render();
+        if (!isDestroyed()) applyPendingAppearance();
       };
+  private final Set<String> pendingAppearance = new HashSet<>();
+  private final Map<String, View> previewRows = new LinkedHashMap<>();
+  private ScrollView launcherScroll;
+  private View launcherHeader;
+  private View weatherRow;
+  private View wallpaperShade;
+  private ImageView launcherWallpaper;
+  private String previewRow;
+  private int homeScrollBeforePreview;
+  private String focusBeforePreview;
   private boolean settingsUnlocked;
   private int pinFailures;
   private long pinBlockedUntil;
@@ -223,6 +233,7 @@ public class MainActivity extends Activity {
 
   void render() {
     ScrollView sc = new ScrollView(this);
+    launcherScroll = sc;
     sc.setFillViewport(true);
     sc.setOnScrollChangeListener(
         (View v, int x, int y, int oldX, int oldY) -> refreshVisibleArtwork());
@@ -231,6 +242,8 @@ public class MainActivity extends Activity {
     FrameLayout stage = new FrameLayout(this);
     stage.setBackground(background());
     ImageView wallpaperImage = new ImageView(this);
+    launcherWallpaper = wallpaperImage;
+    wallpaperShade = null;
     wallpaperImage.setScaleType(
         getPreferences(0).getBoolean("wallpaper_fit", false)
             ? ImageView.ScaleType.FIT_CENTER
@@ -315,6 +328,7 @@ public class MainActivity extends Activity {
             public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture t) {}
           });
       View dim = new View(this);
+      wallpaperShade = dim;
       dim.setBackgroundColor(Color.BLACK);
       dim.setAlpha(getPreferences(0).getInt("wallpaper_dim", 55) / 100f);
       stage.addView(dim, new FrameLayout.LayoutParams(-1, -1));
@@ -349,11 +363,7 @@ public class MainActivity extends Activity {
     launcherView = stage;
     setContentView(stage);
     page = vertical();
-    page.setPadding(
-        dp(getPreferences(0).getInt("margin_left", 28)),
-        dp(getPreferences(0).getInt("margin_top", 20)),
-        dp(getPreferences(0).getInt("margin_right", 28)),
-        dp(24));
+    applyLauncherPadding();
     sc.addView(page);
     header();
     gap(page, 6);
@@ -366,7 +376,15 @@ public class MainActivity extends Activity {
     if (getPreferences(0).getBoolean("keep_screen_on", false))
       getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-    if (previewOpen) previewSettings(true);
+    if (previewOpen) applyPreviewTransform(true, false);
+  }
+
+  private void applyLauncherPadding() {
+    page.setPadding(
+        dp(getPreferences(0).getInt("margin_left", 28)),
+        dp(getPreferences(0).getInt("margin_top", 20)),
+        dp(getPreferences(0).getInt("margin_right", 28)),
+        dp(24));
   }
 
   int accent() {
@@ -375,7 +393,8 @@ public class MainActivity extends Activity {
 
   void header() {
     LinearLayout bar = horizontal();
-    page.addView(bar, lp(-1, 38));
+    launcherHeader = bar;
+    page.addView(bar, 0, lp(-1, 38));
     TextView logo = label("✦  NovaTV", 22, WHITE);
     logo.setTypeface(null, Typeface.BOLD);
     bar.addView(logo, new LinearLayout.LayoutParams(0, -1, 1));
@@ -561,6 +580,7 @@ public class MainActivity extends Activity {
     artworkLoading.clear();
     activeRows = 0;
     appRows.clear();
+    previewRows.clear();
     TextView t = label(title, 22, WHITE);
     t.setTypeface(null, Typeface.BOLD);
     if (!title.isEmpty()) {
@@ -731,6 +751,7 @@ public class MainActivity extends Activity {
                   order.contains(b.pkg) ? order.indexOf(b.pkg) : Integer.MAX_VALUE));
     }
     HorizontalScrollView scroll = new HorizontalScrollView(this);
+    previewRows.put(rowKey, scroll);
     scroll.setClipToPadding(false);
     scroll.setHorizontalScrollBarEnabled(false);
     int width = Appearance.clamp(getPreferences(0).getInt("card_width", 126), 80, 240);
@@ -1079,42 +1100,140 @@ public class MainActivity extends Activity {
 
   void showSettings() {
     if (settingsPanel != null && settingsPanel.isShowing()) return;
-    home();
+    if (currentScreen != 0) home();
     settingsPanel = new TvSettingsPanel(this, accent(), this::rootSettings);
     settingsPanel.show();
   }
 
   void previewSettings(boolean open) {
+    if (previewOpen == open) return;
     previewOpen = open;
+    if (open) {
+      homeScrollBeforePreview = launcherScroll.getScrollY();
+      View focused = launcherScroll.findFocus();
+      focusBeforePreview = focused != null && focused.getTag() instanceof String
+          ? (String) focused.getTag() : null;
+      previewRow = null;
+    }
     if (!open) settingsUnlocked = false;
     if (!open && content != null) {
       returnFocusTag =
           getPreferences(0).getBoolean("remember_focus", true)
-              ? getPreferences(0).getString("last_focus", null)
+              ? (focusBeforePreview != null
+                  ? focusBeforePreview : getPreferences(0).getString("last_focus", null))
               : null;
+      launcherScroll.scrollTo(0, homeScrollBeforePreview);
       restoreAppFocus();
     }
+    applyPreviewTransform(open, true);
+  }
+
+  private void applyPreviewTransform(boolean open, boolean animate) {
     if (launcherView == null) return;
-    launcherView.setPivotX(0);
+    launcherView.animate().cancel();
+    float width = getResources().getDisplayMetrics().widthPixels;
+    launcherView.setPivotX(width * 0.5f);
     launcherView.setPivotY(getResources().getDisplayMetrics().heightPixels / 2f);
+    launcherView.setCameraDistance(width * 4f);
+    float scale = open ? 0.52f : 1f;
+    float shift = open ? -width * 0.215f : 0f;
+    if (!animate) {
+      launcherView.setScaleX(scale);
+      launcherView.setScaleY(scale);
+      launcherView.setRotationY(open ? -5f : 0f);
+      launcherView.setTranslationX(shift);
+      return;
+    }
     launcherView
         .animate()
-        .scaleX(open ? 0.57f : 1f)
-        .scaleY(open ? 0.57f : 1f)
-        .translationX(open ? dp(8) : 0)
+        .scaleX(scale)
+        .scaleY(scale)
+        .rotationY(open ? -5f : 0f)
+        .translationX(shift)
         .setDuration(180)
         .start();
   }
 
   void setBool(String key, boolean value) {
     getPreferences(0).edit().putBoolean(key, value).apply();
-    render();
+    pendingAppearance.add(key);
+    if ("show_all".equals(key)) previewRow = "app_order";
+    if ("show_mobile".equals(key)) previewRow = "mobile_order";
+    if ("show_favorites".equals(key)) previewRow = "favorite_order";
+    handler.removeCallbacks(redraw);
+    applyPendingAppearance();
   }
 
   void setInt(String key, int value) {
     getPreferences(0).edit().putInt(key, value).apply();
+    pendingAppearance.add(key);
     handler.removeCallbacks(redraw);
-    handler.postDelayed(redraw, 60);
+    handler.postDelayed(redraw, 120);
+  }
+
+  private void applyPendingAppearance() {
+    Set<String> changed = new HashSet<>(pendingAppearance);
+    pendingAppearance.clear();
+    if (changed.isEmpty() || launcherScroll == null) return;
+    if (changed.remove("wallpaper_fit")) {
+      launcherWallpaper.setScaleType(getPreferences(0).getBoolean("wallpaper_fit", false)
+          ? ImageView.ScaleType.FIT_CENTER : ImageView.ScaleType.CENTER_CROP);
+    }
+    if (changed.remove("keep_screen_on")) {
+      if (getPreferences(0).getBoolean("keep_screen_on", false))
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+      else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+    if (changed.remove("wallpaper_dim")) {
+      int dim = getPreferences(0).getInt("wallpaper_dim", 55);
+      if (wallpaperShade != null) wallpaperShade.setAlpha(dim / 100f);
+      if (currentWallpaper != null)
+        currentWallpaper.setColorFilter((dim * 255 / 100) << 24, PorterDuff.Mode.SRC_ATOP);
+    }
+    if (changed.removeIf(key -> key.equals("show_status") || key.equals("show_network")
+        || key.equals("show_clock") || key.startsWith("clock_")
+        || key.equals("show_notifications") || key.equals("hide_empty_notifications"))) {
+      page.removeView(launcherHeader);
+      header();
+      updateWeatherAppearance();
+    }
+    if (changed.removeIf(key -> key.equals("show_weather") || key.startsWith("weather_")))
+      updateWeatherAppearance();
+    if (changed.removeIf(key -> key.startsWith("margin_"))) applyLauncherPadding();
+    if (!changed.isEmpty()) rebuildPreviewRows();
+  }
+
+  private void rebuildPreviewRows() {
+    int y = launcherScroll.getScrollY();
+    List<String> previousRows = new ArrayList<>(previewRows.keySet());
+    Map<String, Integer> horizontalPositions = new HashMap<>();
+    previewRows.forEach((key, view) -> horizontalPositions.put(key, view.getScrollX()));
+    home();
+    launcherScroll.post(() -> {
+      previewRows.forEach((key, view) -> view.scrollTo(horizontalPositions.getOrDefault(key, 0), 0));
+      launcherScroll.scrollTo(0, y);
+      if (previewOpen && previewRow != null) {
+        if (!previewRows.containsKey(previewRow) && !previewRows.isEmpty()) {
+          List<String> rows = new ArrayList<>(previewRows.keySet());
+          int index = previousRows.indexOf(previewRow);
+          previewRow = rows.get(Math.max(0, Math.min(index, rows.size() - 1)));
+        }
+        scrollToPreviewRow();
+      }
+    });
+  }
+
+  private void selectPreviewRow(String key) {
+    if (!previewOpen) return;
+    previewRow = key;
+    scrollToPreviewRow();
+  }
+
+  private void scrollToPreviewRow() {
+    View row = previewRows.get(previewRow);
+    if (row == null) return;
+    int center = content.getTop() + row.getTop() + row.getHeight() / 2;
+    launcherScroll.smoothScrollTo(0, Math.max(0, center - launcherScroll.getHeight() / 2));
   }
 
   void toggle(TvSettingsPanel p, String icon, String title, String key, boolean value) {
@@ -1409,7 +1528,8 @@ public class MainActivity extends Activity {
     p.title("▣", "Внешний вид", "Изменения видны слева сразу");
     p.action(
         "≡", "Категории / строки", "Заголовки, интервалы, поля", () -> p.open(this::rowsSettings));
-    p.action("▭", "Карточки", "Размер, пропорции и фокус", () -> p.open(this::cardsSettings));
+    p.action("appearance.cards", "▭", "Карточки", "Размер, пропорции и фокус",
+        () -> p.open(this::cardsSettings));
     p.action("▧", "Обои", "Фон, затемнение, темы", () -> p.open(this::wallpaperSettings));
     p.action("━", "Строка состояния", "Часы, погода, сеть", () -> p.open(this::statusSettings));
     p.action("T", "Шрифт", "Размер интерфейса и диалогов", this::fontSettings);
@@ -1419,6 +1539,10 @@ public class MainActivity extends Activity {
 
   void rowsSettings(TvSettingsPanel p) {
     p.title("≡", "Категории / строки", "");
+    p.action("rows.preview_all", "▣", "Показать весь экран", "", () -> {
+      previewRow = null;
+      launcherScroll.smoothScrollTo(0, 0);
+    });
     toggle(p, "T", "Показывать названия категорий", "show_titles", true);
     toggle(p, "▣", "Значок перед заголовком", "show_category_icons", true);
     toggle(p, "☆", "Избранное", "show_favorites", true);
@@ -1502,7 +1626,8 @@ public class MainActivity extends Activity {
                     (d, n) -> {
                       theme = n;
                       getPreferences(0).edit().putInt("theme", n).apply();
-                      render();
+                      launcherView.setBackground(background());
+                      getWindow().setBackgroundDrawable(background());
                       d.dismiss();
                     })
                 .setNegativeButton("Закрыть", null)
@@ -1554,7 +1679,8 @@ public class MainActivity extends Activity {
                               "clock_format",
                               new String[] {"HH:mm", "hh:mm a", "EEE, d MMM HH:mm"}[n])
                           .apply();
-                      render();
+                      pendingAppearance.add("clock_format");
+                      applyPendingAppearance();
                     })
                 .setNegativeButton("Закрыть", null)
                 .show());
@@ -1630,8 +1756,9 @@ public class MainActivity extends Activity {
             (d, n) -> {
               setInt(key, colors[n]);
               if (reopen) {
-                settingsPanel.dismiss();
-                settings();
+                handler.removeCallbacks(redraw);
+                applyPendingAppearance();
+                if (settingsPanel != null && settingsPanel.isShowing()) settingsPanel.refresh();
               }
             })
         .setNegativeButton("Отмена", null)
@@ -2289,10 +2416,12 @@ public class MainActivity extends Activity {
     toggle(p, "⇥", "Входы телевизора", "show_inputs", false);
     for (String category : readIds("categories"))
       p.action(
+          "category:" + category,
           "≡",
           category,
           readIds("hidden_categories").contains(category) ? "Скрыта" : "Показывается",
-          () ->
+          () -> {
+              selectPreviewRow("category_order_" + category);
               p.open(
                   page -> {
                     page.title("≡", category, "");
@@ -2310,7 +2439,8 @@ public class MainActivity extends Activity {
                               .putString(
                                   "hidden_categories", android.text.TextUtils.join("|", hidden))
                               .apply();
-                          home();
+                          previewRow = "category_order_" + category;
+                          rebuildPreviewRows();
                         });
                     page.action(
                         "▦",
@@ -2319,7 +2449,8 @@ public class MainActivity extends Activity {
                         () -> assignCategoryApps(category));
                     page.action(
                         "↕", "Порядок, название и удаление", "", () -> categoryActions(category));
-                  }));
+                  });
+          });
   }
 
   void createCategory() {
@@ -2405,8 +2536,9 @@ public class MainActivity extends Activity {
                     .edit()
                     .putString("categories", android.text.TextUtils.join("|", categories))
                     .apply();
-                home();
-                manageCategories();
+                previewRow = "category_order_" + category;
+                rebuildPreviewRows();
+                if (settingsPanel != null && settingsPanel.isShowing()) settingsPanel.refresh();
               } else if (n == 2) {
                 EditText input = new EditText(this);
                 input.setSingleLine(true);
@@ -2528,21 +2660,30 @@ public class MainActivity extends Activity {
   }
 
   void weatherPanel() {
-    weather = null;
-    if (!getPreferences(0).getBoolean("show_weather", true)
-        || !getPreferences(0).getBoolean("show_status", true)) return;
     LinearLayout line = horizontal();
+    weatherRow = line;
     page.addView(line, lp(-1, 24));
     weather =
         label(
             getPreferences(0).getString("weather_cache", "Погода: выберите город в настройках"),
             getPreferences(0).getInt("weather_size", 13),
             getPreferences(0).getInt("weather_color", MUTED));
-    if (getPreferences(0).getBoolean("weather_shadow", true))
-      weather.setShadowLayer(dp(2), 0, dp(1), Color.BLACK);
     weather.setSingleLine(true);
     weather.setEllipsize(android.text.TextUtils.TruncateAt.END);
     line.addView(weather, new LinearLayout.LayoutParams(0, -1, 1));
+    updateWeatherAppearance();
+  }
+
+  private void updateWeatherAppearance() {
+    if (weather == null || weatherRow == null) return;
+    boolean shown = getPreferences(0).getBoolean("show_weather", true)
+        && getPreferences(0).getBoolean("show_status", true);
+    weatherRow.setVisibility(shown ? View.VISIBLE : View.GONE);
+    weather.setTextSize(getPreferences(0).getInt("weather_size", 13));
+    weather.setTextColor(getPreferences(0).getInt("weather_color", MUTED));
+    weather.setShadowLayer(getPreferences(0).getBoolean("weather_shadow", true) ? dp(2) : 0,
+        0, dp(1), Color.BLACK);
+    if (shown) loadWeather();
   }
 
   void weatherCity() {
