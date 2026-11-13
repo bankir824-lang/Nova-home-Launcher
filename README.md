@@ -4,9 +4,9 @@
 
 ## Скачать APK
 
-Готовые версии публикуются на странице [Releases](https://github.com/bankir824-lang/NovaTV-Launcher/releases) только из основной ветки `main`. Артефакты сборок pull request предназначены для проверки и не считаются опубликованными версиями.
+Готовые версии публикуются на странице [Releases](https://github.com/bankir824-lang/Nova-home-Launcher/releases) только из основной ветки `main`. Артефакты сборок pull request предназначены для проверки и не считаются опубликованными версиями.
 
-Для установки откройте последний релиз, скачайте файл `NovaTV-Launcher-vX.Y.Z.apk` и установите его на Android TV / Google TV.
+Для установки откройте последний релиз, скачайте APK из раздела Assets и установите его на Android TV / Google TV.
 
 ## Интерфейс
 
