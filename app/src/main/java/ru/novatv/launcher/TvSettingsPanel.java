@@ -11,7 +11,7 @@ import java.util.function.IntConsumer;
 
 /** A remote-friendly settings stack. The launcher behind the dialog remains a live preview. */
 final class TvSettingsPanel extends Dialog {
-  static final float WIDTH_FRACTION = 0.66f;
+  static final float WIDTH_FRACTION = 1f / 3f;
   private static final long ENTER_DURATION_MS = 240;
 
   interface Page {
