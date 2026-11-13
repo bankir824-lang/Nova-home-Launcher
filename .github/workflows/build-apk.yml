@@ -26,7 +26,7 @@ jobs:
         run: gradle --no-daemon testDebugUnitTest lintDebug assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: NovaTV-Launcher-debug
+          name: Nova-home-Launcher-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -34,7 +34,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NovaTV-checks
+          name: Nova-home-Launcher-checks
           path: |
             app/build/reports/
             app/build/test-results/

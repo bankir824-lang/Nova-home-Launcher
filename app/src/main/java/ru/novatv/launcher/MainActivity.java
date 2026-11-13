@@ -242,6 +242,8 @@ public class MainActivity extends Activity {
     ScrollView sc = new ScrollView(this);
     launcherScroll = sc;
     sc.setFillViewport(true);
+    sc.setVerticalScrollBarEnabled(false);
+    sc.setHorizontalScrollBarEnabled(false);
     sc.setOnScrollChangeListener(
         (View v, int x, int y, int oldX, int oldY) -> refreshVisibleArtwork());
     releaseWallpaper();
@@ -402,7 +404,7 @@ public class MainActivity extends Activity {
     LinearLayout bar = horizontal();
     launcherHeader = bar;
     page.addView(bar, 0, lp(-1, 38));
-    TextView logo = label("NovaTV", 22, WHITE);
+    TextView logo = label("Nova home Launcher", 22, WHITE);
     logo.setTypeface(null, Typeface.BOLD);
     bar.addView(logo, new LinearLayout.LayoutParams(0, -1, 1));
     menu = horizontal();
@@ -592,7 +594,7 @@ public class MainActivity extends Activity {
     TextView eyebrow = label("ВАШ ДОМАШНИЙ ЭКРАН", 13, 0xffbcd9ff);
     b.addView(eyebrow);
     gap(b, 5);
-    TextView title = label("Добро пожаловать в NovaTV", 29, WHITE);
+    TextView title = label("Добро пожаловать в Nova home Launcher", 29, WHITE);
     title.setTypeface(null, Typeface.BOLD);
     b.addView(title);
     gap(b, 4);
@@ -1263,7 +1265,7 @@ public class MainActivity extends Activity {
   }
 
   void rootSettings(TvSettingsPanel p) {
-    p.title("✦", "NovaTV", "Настройки домашнего экрана");
+    p.title("✦", "Nova home Launcher", "Настройки домашнего экрана");
     p.section("ПРИЛОЖЕНИЯ");
     p.action("▦", "Все приложения", "ТВ и мобильные приложения", this::openLibrary);
     p.action("≡", "Изменить категории", "Создание, порядок, видимость", this::manageCategories);
@@ -1275,7 +1277,7 @@ public class MainActivity extends Activity {
     p.section("НАСТРОЙКИ");
     p.action(
         "⚙",
-        "Настройки NovaTV",
+        "Настройки Nova home Launcher",
         "Оформление, поведение, система",
         () -> p.open(this::mainSettings));
     systemSetting(p,
@@ -1291,7 +1293,7 @@ public class MainActivity extends Activity {
   }
 
   void mainSettings(TvSettingsPanel p) {
-    p.title("⚙", "Настройки NovaTV", "");
+    p.title("⚙", "Настройки Nova home Launcher", "");
     p.action("☷", "Основные", "Автозапуск, приложения", () -> p.open(this::generalSettings));
     p.action(
         "▣",
@@ -1310,7 +1312,7 @@ public class MainActivity extends Activity {
         android.provider.Settings.ACTION_BLUETOOTH_SETTINGS);
     p.action("⏻", "Электропитание", "Экран и заставка Android", () -> p.open(this::powerSettings));
     p.action(
-        "♧", "Родительский контроль", "PIN настроек и запуска в NovaTV",
+        "♧", "Родительский контроль", "PIN настроек и запуска в Nova home Launcher",
         () -> p.open(this::parentalSettings));
     systemSetting(p,
         "♿",
@@ -1323,8 +1325,8 @@ public class MainActivity extends Activity {
   }
 
   void powerSettings(TvSettingsPanel p) {
-    p.title("⏻", "Электропитание", "NovaTV не меняет системные правила выключения");
-    toggle(p, "☀", "Не гасить экран в NovaTV", "keep_screen_on", false);
+    p.title("⏻", "Электропитание", "Nova home Launcher не меняет системные правила выключения");
+    toggle(p, "☀", "Не гасить экран в Nova home Launcher", "keep_screen_on", false);
     systemSetting(p, "☾", "Заставка Android", "",
         android.provider.Settings.ACTION_DREAM_SETTINGS);
     systemSetting(p, "▣", "Настройки экрана", "",
@@ -1366,12 +1368,12 @@ public class MainActivity extends Activity {
     p.title(
         "♧",
         "Родительский контроль",
-        "PIN действует только внутри NovaTV, не блокирует Android или Google TV");
+        "PIN действует только внутри Nova home Launcher, не блокирует Android или Google TV");
     if (!getPreferences(0).contains("pin_hash")) {
       p.action(
           "+",
           "Создать PIN",
-          "4–8 цифр. При потере потребуется сброс данных NovaTV",
+          "4–8 цифр. При потере потребуется сброс данных Nova home Launcher",
           this::createPin);
       return;
     }
@@ -1379,7 +1381,7 @@ public class MainActivity extends Activity {
     p.action(
         "▦",
         "Защищённые приложения",
-        "Проверять PIN при запуске из NovaTV",
+        "Проверять PIN при запуске из Nova home Launcher",
         () -> {
           List<String> locked = readIds("locked_apps");
           String[] names = new String[installed.size()];
@@ -1441,7 +1443,7 @@ public class MainActivity extends Activity {
     fields.addView(second);
     AlertDialog dialog =
         new NovaDialog(this)
-            .setTitle("Создать PIN NovaTV")
+            .setTitle("Создать PIN Nova home Launcher")
             .setView(fields)
             .setPositiveButton("Сохранить", null)
             .setNegativeButton("Отмена", null)
@@ -1485,7 +1487,7 @@ public class MainActivity extends Activity {
     EditText input = pinInput();
     AlertDialog dialog =
         new NovaDialog(this)
-            .setTitle("PIN NovaTV")
+            .setTitle("PIN Nova home Launcher")
             .setView(input)
             .setPositiveButton("Подтвердить", null)
             .setNegativeButton("Отмена", null)
@@ -1782,7 +1784,7 @@ public class MainActivity extends Activity {
 
   void generalSettings(TvSettingsPanel p) {
     p.title("☷", "Основные", "Google TV и системный HOME не изменяются");
-    p.action("▷", "Автозапуск приложения", "При старте NovaTV", this::autostartSettings);
+    p.action("▷", "Автозапуск приложения", "При старте Nova home Launcher", this::autostartSettings);
     p.action("◉", "Скрытые приложения", "Восстановление скрытых карточек", () -> openAppList(true));
     p.action(
         "↻",
@@ -2083,7 +2085,7 @@ public class MainActivity extends Activity {
   }
 
   void notificationSettings(TvSettingsPanel p) {
-    p.title("♧", "Уведомления", "Тексты хранятся только в памяти NovaTV");
+    p.title("♧", "Уведомления", "Тексты хранятся только в памяти Nova home Launcher");
     systemSetting(p,
         "⚙",
         "Доступ к уведомлениям",
@@ -2105,7 +2107,7 @@ public class MainActivity extends Activity {
           app = info.loadLabel(getPackageManager()).toString();
           icon = info.loadIcon(getPackageManager());
         } catch (PackageManager.NameNotFoundException ignored) {
-          // Some notification senders are not visible to NovaTV.
+          // Some notification senders are not visible to Nova home Launcher.
         }
         p.notification(
             item.title.isEmpty() ? app : item.title,
@@ -2477,7 +2479,7 @@ public class MainActivity extends Activity {
             + (getFilesDir().getUsableSpace() / 1024 / 1024)
             + " МБ\nНайдено приложений: "
             + installed.size()
-            + "\nВерсия NovaTV: 0.6.0";
+            + "\nВерсия Nova home Launcher: " + BuildConfig.VERSION_NAME;
     new NovaDialog(this)
         .setTitle("Диагностика устройства")
         .setMessage(s)
@@ -2775,7 +2777,7 @@ public class MainActivity extends Activity {
     choices[0] = "Выключен";
     for (int i = 0; i < installed.size(); i++) choices[i + 1] = installed.get(i).label;
     new NovaDialog(this)
-        .setTitle("Запуск приложения при старте NovaTV")
+        .setTitle("Запуск приложения при старте Nova home Launcher")
         .setItems(
             choices,
             (d, n) -> {
@@ -2785,7 +2787,7 @@ public class MainActivity extends Activity {
                   .apply();
               Toast.makeText(
                       this,
-                      "Автозапуск сохранён. Сработает при следующем запуске NovaTV",
+                      "Автозапуск сохранён. Сработает при следующем запуске Nova home Launcher",
                       Toast.LENGTH_LONG)
                   .show();
             })

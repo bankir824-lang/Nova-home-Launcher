@@ -32,12 +32,12 @@
             <data android:scheme="content" android:host="android.media.tv" />
         </intent>
     </queries>
-    <application android:label="NovaTV Launcher"
+    <application android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:banner="@drawable/tv_banner"
         android:usesCleartextTraffic="false">
-        <service android:name=".NotificationAccess" android:exported="true" android:label="Уведомления NovaTV" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+        <service android:name=".NotificationAccess" android:exported="true" android:label="Уведомления Nova home Launcher" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
         </service>
         <activity android:name=".MainActivity" android:exported="true"

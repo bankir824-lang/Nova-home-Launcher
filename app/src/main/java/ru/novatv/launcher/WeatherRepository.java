@@ -37,7 +37,7 @@ final class WeatherRepository {
   }
 
   WeatherRepository(String version, SharedPreferences metCache) {
-    userAgent = "NovaTVLauncher/" + version + " (https://github.com/bankir824-lang/NovaTV-Launcher)";
+    userAgent = "NovaHomeLauncher/" + version + " (https://github.com/bankir824-lang/Nova-home-Launcher)";
     this.metCache = metCache;
   }
 
